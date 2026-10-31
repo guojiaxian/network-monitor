@@ -1,0 +1,25 @@
+# VictoriaMetrics 单二进制 systemd 单元（原生部署）
+# 二进制下载：https://github.com/VictoriaMetrics/VictoriaMetrics/releases
+# （国内镜像：https://ghproxy.com/ 或 gh-proxy.com 前缀拼接 release 资产地址）
+# 放置到 /opt/netwatch/bin/victoria-metrics 后：
+#   systemctl enable --now victoriametrics
+[Unit]
+Description=VictoriaMetrics time-series database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch
+Group=netwatch
+ExecStart=/opt/netwatch/bin/victoria-metrics -retentionPeriod=90d -httpListenAddr=:8428 -memory.allowedPercent=40 -storageDataPath=/opt/netwatch/vmdata
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/netwatch/vmdata
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

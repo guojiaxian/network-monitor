@@ -1,0 +1,62 @@
+# NetWatch 中心端部署 —— 方案 B（Docker 备选）
+# 单业务服务器推荐使用方案 A（原生 systemd）：deploy/install-server.sh，无需安装 Docker。
+# 用法：cd deploy && docker compose up -d
+# 中心端建议 4C8G/100G；所有数据卷持久化在本目录 docker volume 中。
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.102.1
+    command: ["-retentionPeriod=90d", "-httpListenAddr=:8428", "-memory.allowedPercent=40"]
+    volumes:
+      - vmdata:/victoria-metrics-data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8428/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: netwatch
+      POSTGRES_PASSWORD: netwatch
+      POSTGRES_DB: netwatch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netwatch -d netwatch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/server.Dockerfile
+    working_dir: /app
+    environment:
+      NW_LISTEN: ":8080"
+      NW_DB: "postgres://netwatch:netwatch@postgres:5432/netwatch?sslmode=disable"
+      NW_VM_URL: "http://victoriametrics:8428"
+      # 探针注册令牌：部署时务必修改！与探针安装参数一致
+      NW_ENROLL_TOKEN: "change-me-enroll-token"
+      # 对外访问基地址（告警邮件中的详情链接），按实际填写，如 http://10.8.0.10:8080
+      NW_BASE_URL: ""
+      NW_WEB_DIR: "/app/web/dist"
+      NW_DATA_DIR: "/app/data"
+    volumes:
+      - nwdata:/app/data
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  vmdata:
+  pgdata:
+  nwdata:

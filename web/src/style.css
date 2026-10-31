@@ -1,0 +1,79 @@
+/* NetWatch 管理端样式：对齐 Uptime Kuma 的视觉语言（浅色卡片 + 深色侧栏 + 状态点） */
+:root {
+  --nw-sidebar-bg: #1d2635;
+  --nw-sidebar-active: #2f81f7;
+  --nw-bg: #f4f5f7;
+}
+
+body {
+  background: var(--nw-bg);
+  font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+
+.nw-layout { display: flex; min-height: 100vh; }
+
+.nw-sidebar {
+  width: 220px; flex: 0 0 220px;
+  background: var(--nw-sidebar-bg); color: #cbd2dc;
+  display: flex; flex-direction: column; padding: 14px 10px;
+  position: sticky; top: 0; height: 100vh;
+}
+.nw-sidebar .brand {
+  color: #fff; font-weight: 700; font-size: 1.05rem;
+  padding: 8px 12px 16px; letter-spacing: .5px;
+}
+.nw-sidebar a {
+  color: #aab3c0; text-decoration: none; padding: 10px 12px;
+  border-radius: 8px; display: flex; align-items: center; gap: 8px;
+  margin-bottom: 2px; font-size: .95rem;
+}
+.nw-sidebar a:hover { background: rgba(255,255,255,.06); color: #fff; }
+.nw-sidebar a.router-link-active { background: var(--nw-sidebar-active); color: #fff; }
+.nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #6c7887; padding: 8px 12px; }
+
+.nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; }
+
+.nw-card {
+  background: #fff; border: 1px solid #e8eaee; border-radius: 12px;
+  padding: 16px 18px; box-shadow: 0 1px 2px rgba(16,24,40,.04);
+}
+
+/* 状态色（对齐 Uptime Kuma 语义） */
+.st-online    { --st: #05c96b; }
+.st-down      { --st: #dc3545; }
+.st-floor_down{ --st: #dc3545; }
+.st-degraded  { --st: #ffc107; }
+.st-speed_low { --st: #e67e22; }
+.st-conflict  { --st: #e67e22; }
+.st-blind     { --st: #6f42c1; }
+.st-unknown   { --st: #adb5bd; }
+
+.st-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--st, #adb5bd); display: inline-block; flex: 0 0 12px;
+}
+.st-dot.pulse { animation: st-pulse 1.6s ease-in-out infinite; }
+@keyframes st-pulse { 50% { opacity: .45; } }
+
+.badge-nw {
+  background: color-mix(in srgb, var(--st) 15%, white);
+  color: color-mix(in srgb, var(--st) 80%, black);
+  border: 1px solid color-mix(in srgb, var(--st) 35%, white);
+  font-weight: 600;
+}
+
+/* 心跳条（参考 Uptime Kuma heartbeat bar） */
+.hb { display: flex; gap: 2px; height: 26px; align-items: stretch; }
+.hb i {
+  flex: 1 1 0; min-width: 4px; border-radius: 2px;
+  background: var(--st, #adb5bd);
+  transition: opacity .15s;
+}
+.hb i:hover { opacity: .7; }
+
+.line-card { border-left: 4px solid var(--st, #adb5bd); cursor: pointer; }
+.line-card:hover { box-shadow: 0 3px 10px rgba(16,24,40,.10); }
+
+.stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+
+table.nw-table td, table.nw-table th { vertical-align: middle; }

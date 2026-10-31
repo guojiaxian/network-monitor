@@ -1,0 +1,135 @@
+package agent
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptrace"
+	"time"
+
+	probing "github.com/prometheus-community/pro-bing"
+)
+
+// 探测实现均支持绑定源 IP，确保流量经策略路由从本楼层线路出站。
+
+// pingOnce 发一个 ICMP 包。target 为 IP 或可解析主机名。
+func pingOnce(ctx context.Context, target, sourceIP string, timeout time.Duration) (rttMs float64, ok bool, err error) {
+	p := probing.New(target)
+	p.SetPrivileged(true) // 需 root 或 CAP_NET_RAW（systemd 单元已授权）
+	p.Count = 1
+	p.Timeout = timeout
+	if sourceIP != "" {
+		p.Source = sourceIP
+	}
+	if err = p.Run(); err != nil {
+		return 0, false, err
+	}
+	st := p.Statistics()
+	if st.PacketsRecv == 0 {
+		return 0, false, fmt.Errorf("icmp timeout")
+	}
+	return float64(st.AvgRtt.Microseconds()) / 1000.0, true, nil
+}
+
+// tcpOnce TCP 连通性探测，target 为 host:port。
+func tcpOnce(ctx context.Context, target, sourceIP string, timeout time.Duration) (rttMs float64, ok bool, err error) {
+	d := &net.Dialer{Timeout: timeout}
+	if ip := net.ParseIP(sourceIP); ip != nil {
+		d.LocalAddr = &net.TCPAddr{IP: ip}
+	}
+	start := time.Now()
+	conn, err := d.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return 0, false, err
+	}
+	rtt := float64(time.Since(start).Microseconds()) / 1000.0
+	_ = conn.Close()
+	return rtt, true, nil
+}
+
+// dnsOnce 向指定 DNS 服务器解析测试域名。
+func dnsOnce(ctx context.Context, server, domain, sourceIP string, timeout time.Duration) (rttMs float64, ok bool, err error) {
+	d := &net.Dialer{Timeout: timeout}
+	if ip := net.ParseIP(sourceIP); ip != nil {
+		d.LocalAddr = &net.UDPAddr{IP: ip}
+	}
+	r := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return d.DialContext(ctx, "udp", server)
+		},
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	start := time.Now()
+	if _, err = r.LookupHost(cctx, domain); err != nil {
+		return 0, false, err
+	}
+	return float64(time.Since(start).Microseconds()) / 1000.0, true, nil
+}
+
+// httpOnce HTTP 探测：任意响应（含 3xx/4xx）均视为链路可达，记录状态码、TTFB 与证书剩余天数。
+func httpOnce(ctx context.Context, targetURL, sourceIP string, timeout time.Duration) (ttfbMs float64, code int, ok bool, certDays float64, err error) {
+	d := &net.Dialer{Timeout: timeout}
+	if ip := net.ParseIP(sourceIP); ip != nil {
+		d.LocalAddr = &net.TCPAddr{IP: ip}
+	}
+	var tlsConn *tls.Conn
+	transport := &http.Transport{
+		DialContext:         d.DialContext,
+		TLSHandshakeTimeout: timeout,
+		ResponseHeaderTimeout: timeout,
+		DisableKeepAlives:   true,
+		Proxy:               nil, // 探针直连，不走系统代理
+		// 自定义 TLS 拨号：不校验证书（仅测可达性），但读取对端证书计算剩余天数
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			raw, err := d.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			host, _, _ := net.SplitHostPort(addr)
+			tc := tls.Client(raw, &tls.Config{ServerName: host, InsecureSkipVerify: true})
+			if err := tc.HandshakeContext(ctx); err != nil {
+				raw.Close()
+				return nil, err
+			}
+			tlsConn = tc
+			return tc, nil
+		},
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	var ttfb time.Duration
+	start := time.Now()
+	trace := &httptrace.ClientTrace{
+		GotFirstResponseByte: func() { ttfb = time.Since(start) },
+	}
+
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, targetURL, nil)
+	if err != nil {
+		return 0, 0, false, 0, err
+	}
+	req.Header.Set("User-Agent", "netwatch-agent/1.0")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, false, 0, err
+	}
+	defer resp.Body.Close()
+	_ = resp.Body.Close()
+	if tlsConn != nil && len(tlsConn.ConnectionState().PeerCertificates) > 0 {
+		notAfter := tlsConn.ConnectionState().PeerCertificates[0].NotAfter
+		certDays = time.Until(notAfter).Hours() / 24
+	}
+	return float64(ttfb.Microseconds()) / 1000.0, resp.StatusCode, true, certDays, nil
+}
+
+// nowMs 当前毫秒时间戳
+func nowMs() int64 { return time.Now().UnixMilli() }

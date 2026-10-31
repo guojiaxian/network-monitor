@@ -1,0 +1,25 @@
+# 探针 systemd 服务单元
+# 安装位置：/etc/systemd/system/netwatch-agent.service
+# systemd start; systemctl enable --now netwatch-agent
+[Unit]
+Description=NetWatch network probe agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 首次部署后请修改 -server 与 -token（或使用 NW_SERVER / NW_ENROLL_TOKEN 环境变量）
+ExecStart=/usr/local/bin/netwatch-agent -server http://CENTER_IP:8080 -token CHANGE_ME_ENROLL_TOKEN
+Restart=always
+RestartSec=5
+# ICMP 需要 CAP_NET_RAW；自更新需写 /usr/local/bin；其余权限全部收回
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/netwatch-agent /usr/local/bin
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

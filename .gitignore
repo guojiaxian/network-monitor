@@ -1,0 +1,21 @@
+# 构建产物
+bin/
+*.test
+*.out
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 交付包与本地数据（可由 make dist 重建；data/ 含 SSH 主密钥，禁止入库）
+dist/
+data/
+*.jsonl
+identity.json
+
+# 运行时
+nohup.out
+*.pid
+
+# 部署本地配置
+deploy/*.env

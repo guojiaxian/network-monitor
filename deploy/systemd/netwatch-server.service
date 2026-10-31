@@ -1,0 +1,31 @@
+# 中心端 systemd 服务单元（原生部署，无 Docker）
+# 安装位置：/etc/systemd/system/netwatch-server.service
+# 前置：PostgreSQL 与 VictoriaMetrics 已按 deploy/README-部署手册.md 就绪
+[Unit]
+Description=NetWatch center server
+After=network-online.target postgresql.service victoriametrics.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch
+Group=netwatch
+WorkingDirectory=/opt/netwatch
+Environment=NW_LISTEN=:8080
+Environment=NW_DB=postgres://netwatch:netwatch@127.0.0.1:5432/netwatch?sslmode=disable
+Environment=NW_VM_URL=http://127.0.0.1:8428
+Environment=NW_ENROLL_TOKEN=change-me-enroll-token
+Environment=NW_BASE_URL=
+Environment=NW_WEB_DIR=/opt/netwatch/web/dist
+Environment=NW_DATA_DIR=/opt/netwatch/data
+ExecStart=/opt/netwatch/bin/netwatch-server
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/netwatch
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
