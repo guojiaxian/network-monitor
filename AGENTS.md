@@ -76,7 +76,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 5. 演示/测试环境（当前运行态）
 
-- **中心端**：127.0.0.1:28765，env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch...`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=web/dist`、`NW_DATA_DIR=data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
+- **中心端**：0.0.0.0:28765（局域网经 http://10.8.11.4:28765 访问），env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch...`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=web/dist`、`NW_DATA_DIR=data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
 - **依赖容器**（docker）：`nwtest-pg`（PG16，宿主 5433）、`nwtest-vm`（VictoriaMetrics v1.102.1，宿主 8428）。
 - **探针**：agent1 = root 进程，state /tmp/nw-agent，绑"联通1号线"（internal 组，改名"1楼-东配线间"）；agent2 = **uid 1234** 进程（`setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw`，state /tmp/nw-agent2 **属主必须 1234**），现为**外网组**（external），探测 baidu HTTPS。
 - **账号**：admin/netwatch123（管理员）、viewer1/viewer12345（观察者）。**会话存内存，server 重启后需重新登录**（`curl -c` 存 /tmp/nw-ck 或读 /tmp/nw-tok）。
@@ -146,7 +146,14 @@ python3 /tmp/mock_snmp.py &            # udp 1161
 
 `docs/01` 开源调研（选型依据）· `02` 设计与功能规格（架构/探测/测速/告警/UI）· `03` 开发计划（里程碑全部完成）· `04` 运维手册（部署/升级/备份/故障处置/阿里云三方案）· `05` 演练清单（9 场景+沙箱预演记录+验收模板）· `06` 用户操作手册。README 有完整验证记录时间线。
 
-## 12. 给下一个 AI agent 的行为约定
+## 12. Git 与发布
+
+- 仓库：`git@github.com:guojiaxian/network-monitor.git`（main 分支），2026-10-31 首推（v0.2 全量，75 文件）。
+- .gitignore 覆盖：bin/、dist/（make dist 重建）、data/（**含 ssh-master.key 严禁入库**）、web/dist、web/node_modules。
+- agent1 从本轮起由 systemd 管理（/usr/local/bin + /var/lib/netwatch-agent，id b0f93f84...，绑定联通1号线）；沙箱 /tmp 身份目录丢失即自动重注册，旧行手动删。
+- 发布流程：改代码 → make test → make dist → git commit/push。
+
+## 13. 给下一个 AI agent 的行为约定
 
 - 代码注释、日志、UI 文案用**中文**；新功能遵循现有模式（设置进 settings 表+白名单、告警进 kindSeverity/kindTitle、前端加卡片区块）。
 - 任何改动：`go build ./... && go vet` 通过 → 重建 bin → **重启演示 server** → 用 curl 按 §8 验证 → 更新 README 验证记录。
