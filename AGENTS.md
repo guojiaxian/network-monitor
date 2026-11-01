@@ -76,7 +76,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 5. 演示/测试环境（当前运行态）
 
-- **中心端**：0.0.0.0:28765（局域网经 http://10.8.11.4:28765 访问），env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch...`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=web/dist`、`NW_DATA_DIR=data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
+- **中心端**：0.0.0.0:18003（局域网经 http://10.8.11.4:18003 访问；2026-10-31 由 18003 改端口），env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch...`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=web/dist`、`NW_DATA_DIR=data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
 - **依赖容器**（docker）：`nwtest-pg`（PG16，宿主 5433）、`nwtest-vm`（VictoriaMetrics v1.102.1，宿主 8428）。
 - **探针**：agent1 = root 进程，state /tmp/nw-agent，绑"联通1号线"（internal 组，改名"1楼-东配线间"）；agent2 = **uid 1234** 进程（`setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw`，state /tmp/nw-agent2 **属主必须 1234**），现为**外网组**（external），探测 baidu HTTPS。
 - **账号**：admin/netwatch123（管理员）、viewer1/viewer12345（观察者）。**会话存内存，server 重启后需重新登录**（`curl -c` 存 /tmp/nw-ck 或读 /tmp/nw-tok）。
@@ -91,7 +91,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 7. 踩坑记录（新 agent 必读，避免重复排查）
 
-1. **改 server 代码后忘记重启进程**→表现为"新功能 404/行为不变"。先 `ss -tlnp | grep 28765` 确认进程启动时间。
+1. **改 server 代码后忘记重启进程**→表现为"新功能 404/行为不变"。先 `ss -tlnp | grep 18003` 确认进程启动时间。
 2. **Bash 工具的 shell cwd 会漂移**：相对路径 `./bin/...` 偶发 "command not found"（exit 127）。**永远先 `cd /root/network-monitor`**。
 3. **pkill -f 匹配会把执行 shell 自己也杀掉**（命令行含相同字符串）；用 `ps -eo user,pid,cmd | grep 'netwatch-agen[t]'` 后按 PID kill。
 4. **gosnmp**：返回的 OID 带**前导点**（`.1.3.6...`），OctetString 是 `[]byte` 不是 string，Counter64 值就是 uint64（gosnmp.Counter64 是常量不是类型）。
@@ -111,13 +111,13 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ```bash
 # 重启中心端（演示）
-cd /root/network-monitor && NW_LISTEN=127.0.0.1:28765 NW_DB='postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable' NW_VM_URL='http://127.0.0.1:8428' NW_ENROLL_TOKEN=test-token NW_WEB_DIR=/root/network-monitor/web/dist NW_DATA_DIR=/root/network-monitor/data ./bin/netwatch-server > /tmp/nw-server.log 2>&1 &
+cd /root/network-monitor && NW_LISTEN=127.0.0.1:18003 NW_DB='postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable' NW_VM_URL='http://127.0.0.1:8428' NW_ENROLL_TOKEN=test-token NW_WEB_DIR=/root/network-monitor/web/dist NW_DATA_DIR=/root/network-monitor/data ./bin/netwatch-server > /tmp/nw-server.log 2>&1 &
 # 重启 agent2（外网组，uid 1234）
-NW_SERVER=http://127.0.0.1:28765 NW_ENROLL_TOKEN=test-token NW_STATE_DIR=/tmp/nw-agent2 setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw ./bin/netwatch-agent > /tmp/nw-agent2.log 2>&1 &
+NW_SERVER=http://127.0.0.1:18003 NW_ENROLL_TOKEN=test-token NW_STATE_DIR=/tmp/nw-agent2 setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw ./bin/netwatch-agent > /tmp/nw-agent2.log 2>&1 &
 # 登录取 token
-TOK=$(curl -s -c - -X POST http://127.0.0.1:28765/api/admin/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"netwatch123"}' | grep nw_session | awk '{print $NF}')
+TOK=$(curl -s -c - -X POST http://127.0.0.1:18003/api/admin/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"netwatch123"}' | grep nw_session | awk '{print $NF}')
 # 压测回填 / SNMP mock / SSH mock
-./bin/loadgen -server http://127.0.0.1:28765 -token test-token -probes 12 -backfill 7
+./bin/loadgen -server http://127.0.0.1:18003 -token test-token -probes 12 -backfill 7
 python3 /tmp/mock_snmp.py &            # udp 1161
 /tmp/sshmockd 2222 root 'Op@2026!x' &
 ```
