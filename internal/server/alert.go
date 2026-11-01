@@ -152,6 +152,10 @@ type Engine struct {
 	probes map[string]*probeAgg
 	live   map[string]*liveAlert // fingerprint → 进行中的告警
 
+	metaMu    sync.Mutex
+	metaUntil time.Time
+	metaMap   map[string]LineMeta
+
 	silMu    sync.Mutex
 	silUntil time.Time
 	silences []SilenceRow // 生效中的静默窗口（短缓存）
@@ -161,6 +165,25 @@ type Engine struct {
 
 // SetSched 注入测速调度器
 func (e *Engine) SetSched(s *SpeedSched) { e.sched = s }
+
+// getMeta 线路元信息（10s 缓存）：metrics 上报热路径避免每批次查库
+func (e *Engine) getMeta(ctx context.Context) (map[string]LineMeta, error) {
+	e.metaMu.Lock()
+	defer e.metaMu.Unlock()
+	if time.Now().Before(e.metaUntil) && e.metaMap != nil {
+		return e.metaMap, nil
+	}
+	m, err := e.store.ProbeLineMeta(ctx)
+	if err != nil {
+		if e.metaMap != nil {
+			return e.metaMap, nil // 退化用旧缓存
+		}
+		return nil, err
+	}
+	e.metaMap = m
+	e.metaUntil = time.Now().Add(10 * time.Second)
+	return m, nil
+}
 
 func NewEngine(cfg Config, store *Store, tsdb *TSDB) *Engine {
 	e := &Engine{
@@ -213,7 +236,7 @@ func (e *Engine) Ingest(ctx context.Context, agentID string, samples []proto.Sam
 	// 线路标签用于时序库；同时取回线路元信息做带宽达标判定
 	var line string
 	var lm LineMeta
-	if m, err := e.store.ProbeLineMeta(ctx); err == nil {
+	if m, err := e.getMeta(ctx); err == nil {
 		if mm, ok := m[agentID]; ok {
 			lm = mm
 			if mm.Bound {
@@ -383,7 +406,7 @@ func (e *Engine) evaluate() {
 		e.log.Printf("alert settings: %v", err)
 		return
 	}
-	meta, err := e.store.ProbeLineMeta(ctx)
+	meta, err := e.getMeta(ctx)
 	if err != nil {
 		e.log.Printf("line meta: %v", err)
 		return

@@ -423,6 +423,10 @@ func (a *AdminAPI) upsertFloor(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, "参数错误")
 		return
 	}
+	if !validDisplayName(fr.Name) {
+		httpError(w, 400, "楼层名含非法字符（禁止 \" \\ 反引号，且不能为空白）")
+		return
+	}
 	var id *int
 	if fr.ID != 0 {
 		id = &fr.ID
@@ -467,6 +471,10 @@ func (a *AdminAPI) upsertLine(w http.ResponseWriter, r *http.Request) {
 	var l LineRow
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&l); err != nil || l.Name == "" {
 		httpError(w, 400, "参数错误")
+		return
+	}
+	if !validDisplayName(l.Name) {
+		httpError(w, 400, "线路名含非法字符（禁止 \" \\ 反引号，且不能为空白）")
 		return
 	}
 	nid, err := a.store.UpsertLine(r.Context(), &l)
@@ -665,6 +673,16 @@ func (a *AdminAPI) getSettings(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, "db")
 		return
 	}
+	// SMTP 密码不明文回传：已配置时返回占位符，PUT 收到占位符/空则保留原值
+	if raw, ok := m["smtp"]; ok {
+		var sm SMTPSettings
+		if json.Unmarshal(raw, &sm) == nil && sm.Password != "" {
+			sm.Password = "__SET__"
+			if b, err := json.Marshal(sm); err == nil {
+				m["smtp"] = b
+			}
+		}
+	}
 	writeJSON(w, m)
 }
 
@@ -682,10 +700,47 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 		if !allowed[k] {
 			continue
 		}
+		if k == "internal_monitors" {
+			var im MonitorSettings
+			if json.Unmarshal(v, &im) != nil {
+				httpError(w, 400, "internal_monitors 格式错误")
+				return
+			}
+			seen := map[string]bool{}
+			for _, it := range im.Items {
+				it.Name = strings.TrimSpace(it.Name)
+				it.Target = strings.TrimSpace(it.Target)
+				if it.Name == "" || it.Target == "" {
+					httpError(w, 400, "监控项 name/target 不能为空")
+					return
+				}
+				if it.Type != "tcp" && it.Type != "http" && it.Type != "icmp" {
+					httpError(w, 400, "监控项 type 必须为 tcp/http/icmp")
+					return
+				}
+				if seen[it.Name] {
+					httpError(w, 400, "监控项名称重复: "+it.Name)
+					return
+				}
+				seen[it.Name] = true
+			}
+		}
 		var check any
 		if json.Unmarshal(v, &check) != nil {
 			httpError(w, 400, "invalid json for "+k)
 			return
+		}
+		if k == "smtp" {
+			var incoming SMTPSettings
+			if json.Unmarshal(v, &incoming) == nil && (incoming.Password == "" || incoming.Password == "__SET__") {
+				var cur SMTPSettings
+				if a.store.GetSetting(r.Context(), "smtp", &cur) == nil {
+					incoming.Password = cur.Password
+				}
+				if nb, err := json.Marshal(incoming); err == nil {
+					v = nb
+				}
+			}
 		}
 		if err := a.store.PutSetting(r.Context(), k, json.RawMessage(v)); err != nil {
 			httpError(w, 500, "db")
@@ -841,7 +896,7 @@ func (a *AdminAPI) addUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.CreateUser(r.Context(), req.Username, string(hash)); err != nil {
-		httpError(w, 500, "db: "+err.Error())
+		httpError(w, 400, "用户名已存在")
 		return
 	}
 	if err := a.store.SetUserRole(r.Context(), req.Username, req.Role); err != nil {
@@ -896,6 +951,19 @@ func (a *AdminAPI) deleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // safeName 白名单字符校验（防路径穿越）
+// validDisplayName 线路/楼层/探针显示名：拒绝会破坏 PromQL 查询与 HTML 的字符
+func validDisplayName(s string) bool {
+	if len([]rune(s)) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if c == '"' || c == '\\' || c == '`' || c == '\n' || c == '\r' {
+			return false
+		}
+	}
+	return strings.TrimSpace(s) != ""
+}
+
 func safeName(s string) bool {
 	if s == "" || len(s) > 128 {
 		return false
@@ -934,6 +1002,23 @@ func (a *AdminAPI) createSilence(w http.ResponseWriter, r *http.Request) {
 	if req.Hours > 24*30 {
 		httpError(w, 400, "静默时长过长（最长 30 天）")
 		return
+	}
+	if req.LineID != nil {
+		lines, err := a.store.ListLines(r.Context())
+		if err != nil {
+			httpError(w, 500, "db")
+			return
+		}
+		found := false
+		for _, l := range lines {
+			if l.ID == *req.LineID {
+				found = true
+			}
+		}
+		if !found {
+			httpError(w, 400, "线路不存在")
+			return
+		}
 	}
 	sess, _ := r.Context().Value(ctxUserKey).(nwSession)
 	now := time.Now()
@@ -1120,6 +1205,9 @@ func (a *AdminAPI) snmpIfaces(w http.ResponseWriter, r *http.Request) {
 	if st.Device == "" || st.Community == "" {
 		httpError(w, 400, "请先填写设备 IP 与只读团体字并保存")
 		return
+	}
+	if st.Port <= 0 || st.Port > 65535 {
+		st.Port = 161
 	}
 	ifaces, err := Ifaces(st)
 	if err != nil {
@@ -1379,6 +1467,15 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 	if start <= 0 || start >= end {
 		start = end - 3600
 	}
+
+	// PromQL 标签值转义：\ " 破坏匹配串（注入面收口）
+	esc := func(v string) string {
+		v = strings.ReplaceAll(v, `\`, `\\`)
+		v = strings.ReplaceAll(v, `"`, `\"`)
+		return v
+	}
+	probe = esc(probe)
+	target = esc(target)
 
 	var okMetric, rttMetric string
 	switch typ {

@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -283,10 +286,16 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 }
 
 func (s *Store) CreateUser(ctx context.Context, username, hash string) error {
-	_, err := s.pool.Exec(ctx,
+	ct, err := s.pool.Exec(ctx,
 		`INSERT INTO users(username, password_hash) VALUES($1,$2) ON CONFLICT (username) DO NOTHING`,
 		username, hash)
-	return err
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("用户名 %q 已存在", username)
+	}
+	return nil
 }
 
 func (s *Store) SetUserRole(ctx context.Context, username, role string) error {
@@ -729,7 +738,11 @@ func (s *Store) GetProbeSSH(ctx context.Context, probeID string) (SshRow, error)
 func (s *Store) UpdateProbeMeta(ctx context.Context, probeID string, name *string,
 	host *string, port *int, user *string, passEnc *string) error {
 	if name != nil {
-		if _, err := s.pool.Exec(ctx, `UPDATE probes SET name=$2 WHERE id=$1`, probeID, *name); err != nil {
+		trimmed := strings.TrimSpace(*name)
+		if utf8.RuneCountInString(trimmed) > 64 {
+			return errors.New("探针名称过长（≤64 字符）")
+		}
+		if _, err := s.pool.Exec(ctx, `UPDATE probes SET name=$2 WHERE id=$1`, probeID, trimmed); err != nil {
 			return err
 		}
 	}

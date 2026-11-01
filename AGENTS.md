@@ -105,7 +105,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 12. **探针时钟漂移**：样本时间戳由探针产生，探针时钟快 >2min 会污染判定窗口（漏报）。Ingest 已内置钳位（快于服务器 >2min 的样本 TS 改为服务器当前时间，日志 `clock skew`）；历史回填（loadgen -backfill）发过去时间戳不受影响。根因解法是给全部 VM 配 NTP。
 14. **探测历史（history 接口）**：数据源是 VM /api/v1/export（NDJSON 逐行 JSON），经 TSDB.Export 解析；monitor 类型无 probe 标签、按 monitor 名过滤；HTTP 的 code/cert 是独立序列（nw_http_code / nw_http_cert_days），按 (target|ts) 关联回记录。
 13. **沙箱单机测试的覆盖边界**（详见与用户的测试局限性讨论）：策略路由前提、前端浏览器渲染、真实 SMTP/钉钉/企微/防火墙 SNMP、12 台真实 VM 系统差异均未实测——现场部署后按 §1 剩余事项逐项验证，重点先跑三个"测试"按钮。
-15. **全功能 API 测试**（/tmp/functest.py，47 用例全过，2026-10-31）：修复过 setup 检查顺序（400/403 颠倒）、线路/楼层重名未拒绝（500→400+提示）、CSV 表头按内容误判（含"楼层"的数据行被跳过）、ssh_port=0 未钳位、assign 不存在线路 500、history limit>5000 归零、agent-releases version 路径穿越（../evil 可写任意目录）、删除用户后其会话仍有效（8 类）。**教训：新加接口必须同步加进 functest.py 回归**。安全模式：safeName() 白名单（版本/文件名）、删除用户同步失效会话、admin 会话内存态。
+15. **全功能 API 测试**（/tmp/functest.py 47 用例 + /tmp/functest2.py 18 用例，2026-10-31 全 PASS）：第一轮修 8 类（setup 顺序、重名拒绝、CSV 表头误判、ssh_port 钳位、assign 校验、limit 钳位、**版本号路径穿越**、删用户会话残留）；第二轮修 6 类（内置监控项重名/空名/空目标/非法类型、**重名用户静默提权**（CreateUser ON CONFLICT DO NOTHING 需查 RowsAffected）、history PromQL 注入转义、SMTP 密码明文回显（GET 掩码 __SET__ / PUT 空或占位符保留原值）、静默绑不存在线路 500、名称空白落库）。**连锁事故记录：提权 bug 使 uexist 成为第二 admin → "最后一个管理员"守卫失效 → 测试删掉了真 admin → 演示环境经 DELETE FROM users + setup 向导恢复**。教训：新加接口必须同步加回归用例；测试脚本对"已有数据"要幂等。
 
 ## 8. 常用操作配方
 
