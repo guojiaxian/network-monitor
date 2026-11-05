@@ -42,7 +42,7 @@ import { api } from '../api'
 
 const alerts = ref([]), filter = ref('firing')
 
-const kinds = { line_down: '线路中断', floor_down: '楼层中断', blind: '监控盲区', degraded: '线路降质', speed_low: '带宽不达标', probe_conflict: '探针数据冲突', site_down: '网站外网不可达', site_conflict: '外网探针冲突', cert_expiring: '证书即将过期', monitor_down: '内网服务不可达' }
+const kinds = { line_down: '线路中断', floor_down: '楼层中断', blind: '监控盲区', degraded: '线路降质', speed_low: '带宽不达标', probe_conflict: '探针数据冲突', site_down: '网站外网不可达', site_conflict: '外网探针冲突', cert_expiring: '证书即将过期', monitor_down: '内网服务不可达', industry_down: '行业网不可达' }
 function kindText(k) { return kinds[k] || k }
 function sevCls(s) { return { P0: 'bg-dark', P1: 'bg-danger', P2: 'bg-warning text-dark' }[s] || 'bg-secondary' }
 function fmt(t) { return dayjs(t).format('YYYY-MM-DD HH:mm:ss') }

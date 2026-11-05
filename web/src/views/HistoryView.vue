@@ -23,6 +23,7 @@
             <option value="dns">DNS（内网组）</option>
             <option value="http">HTTP（内网组）</option>
             <option value="monitor">内→内 监控</option>
+            <option value="industry">行业网监测</option>
             <option value="speed">测速（内网组）</option>
           </select>
         </div>

@@ -13,10 +13,11 @@ type ScreenAPI struct {
 	store *Store
 	eng   *Engine
 	mon   *MonitorRunner
+	ind   *IndustryRunner
 }
 
-func NewScreenAPI(store *Store, eng *Engine, mon *MonitorRunner) *ScreenAPI {
-	return &ScreenAPI{store: store, eng: eng, mon: mon}
+func NewScreenAPI(store *Store, eng *Engine, mon *MonitorRunner, ind *IndustryRunner) *ScreenAPI {
+	return &ScreenAPI{store: store, eng: eng, mon: mon, ind: ind}
 }
 
 func (a *ScreenAPI) Routes(r chi.Router) {
@@ -28,7 +29,7 @@ func (a *ScreenAPI) overview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	out, err := overviewData(ctx, a.store, a.eng, a.mon)
+	out, err := overviewData(ctx, a.store, a.eng, a.mon, a.ind)
 	if err != nil {
 		httpError(w, 500, "db")
 		return

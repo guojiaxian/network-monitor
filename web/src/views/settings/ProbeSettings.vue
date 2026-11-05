@@ -53,6 +53,21 @@
         placeholder="OA系统,http,http://10.8.0.20:8080/login,30&#10;核心交换机,icmp,10.8.0.1,30&#10;文件服务器,tcp,10.8.0.30:445,30"></textarea>
       <div v-if="imMsg" class="small mt-2" :class="imOk ? 'text-success' : 'text-danger'">{{ imMsg }}</div>
     </div>
+
+    <div class="nw-card mb-3">
+      <h6>行业网监测（中心 → 行业网 · 仅 ICMP ping）</h6>
+      <p class="text-secondary small mb-2">中心服务器对行业网指定 IP <b>仅做 ICMP ping</b>，不做 TCP/HTTP 等任何其他探测（以免被行业网封禁）。每行一个目标：<code>名称,IP,间隔秒</code>，IP 须为合法地址（如 10.5.x.x）。请确保中心服务器可路由到行业网网段。连续 3 次失败触发 P2"行业网不可达"，恢复自动解除。</p>
+      <div class="d-flex align-items-center mb-2">
+        <div class="form-check">
+          <input id="ind1" v-model="ind.enabled" type="checkbox" class="form-check-input" />
+          <label for="ind1" class="form-check-label">启用</label>
+        </div>
+        <button class="btn btn-sm btn-primary ms-auto" @click="saveInd">保存</button>
+      </div>
+      <textarea v-model="indStr" class="form-control font-monospace" rows="4"
+        placeholder="行业网核心交换,10.5.0.1,30&#10;行业网业务主机,10.5.0.20,30"></textarea>
+      <div v-if="indMsg" class="small mt-2" :class="indOk ? 'text-success' : 'text-danger'">{{ indMsg }}</div>
+    </div>
   </div>
 </template>
 
@@ -65,6 +80,7 @@ const ac = ref({}), icmpStr = ref(''), tcpStr = ref(''), dnsStr = ref(''), httpS
 const enrollToken = ref(''), acMsg = ref(''), acOk = ref(false)
 const ext = ref({}), extHttpStr = ref(''), extIcmpStr = ref(''), extMsg = ref(''), extOk = ref(false)
 const im = ref({}), imStr = ref(''), imMsg = ref(''), imOk = ref(false)
+const ind = ref({}), indStr = ref(''), indMsg = ref(''), indOk = ref(false)
 
 async function load() {
   const s = await api.get('/api/admin/settings')
@@ -79,6 +95,8 @@ async function load() {
   extIcmpStr.value = lines(ext.value.icmp_targets)
   im.value = s.internal_monitors || {}
   imStr.value = (im.value.items || []).map(x => [x.name, x.type, x.target, x.interval_s].join(',')).join('\n')
+  ind.value = s.industry_monitors || {}
+  indStr.value = (ind.value.items || []).map(x => [x.name, x.target, x.interval_s].join(',')).join('\n')
 }
 
 function bump(v) { v.version = (v.version || 0) + 1; return v }
@@ -119,6 +137,18 @@ async function saveIM() {
     await api.put('/api/admin/settings', { internal_monitors: { enabled: im.value.enabled, items } })
     imMsg.value = `已保存 ${items.length} 个目标，30 秒内生效`; imOk.value = true
   } catch (e) { imMsg.value = e.message }
+}
+
+async function saveInd() {
+  indMsg.value = ''; indOk.value = false
+  try {
+    const items = indStr.value.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => {
+      const [name, target, interval] = l.split(',').map(x => (x || '').trim())
+      return { name, target, interval_s: Number(interval) || 30 }
+    }).filter(x => x.name && x.target)
+    await api.put('/api/admin/settings', { industry_monitors: { enabled: ind.value.enabled, items } })
+    indMsg.value = `已保存 ${items.length} 个目标，30 秒内生效（仅 ICMP ping）`; indOk.value = true
+  } catch (e) { indMsg.value = e.message }
 }
 
 onMounted(load)

@@ -60,6 +60,9 @@ func main() {
 	mon := server.NewMonitorRunner(store, tsdb, eng)
 	mon.Start(ctx)
 
+	ind := server.NewIndustryRunner(store, tsdb, eng)
+	ind.Start(ctx)
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
@@ -73,8 +76,8 @@ func main() {
 	})
 
 	r.Route("/api/agent", server.NewAgentAPI(cfg, store, eng, sched).Routes)
-	r.Route("/api/admin", server.NewAdminAPI(cfg, store, eng, sched, rep, mon, tsdb).Routes)
-	r.Route("/api/screen", server.NewScreenAPI(store, eng, mon).Routes)
+	r.Route("/api/admin", server.NewAdminAPI(cfg, store, eng, sched, rep, mon, ind, tsdb).Routes)
+	r.Route("/api/screen", server.NewScreenAPI(store, eng, mon, ind).Routes)
 
 	// 前端静态文件（web/dist 存在时挂载；SPA 路由回退到 index.html）
 	if st, err := os.Stat(cfg.WebDir); err == nil && st.IsDir() {

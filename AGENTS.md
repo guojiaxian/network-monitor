@@ -15,6 +15,7 @@
 
 **2026-11-05 正式中心端已上电**：全新专用麒麟 V10 服务器（10.8.14.200）原生部署完成（无 Docker，PG/VM 均本机 systemd），server 监听 **0.0.0.0:80**，开机自启，端到端验证通过。
 **2026-11-05/06 现场单探针全功能测试完成（报告=docs/07）**：探针服务器 **10.8.14.201**（麒麟 V10 1C1G，root 密码 `[探针root口令见现场授权台账]`，用户授权 SSH）install-agent.sh 一键装探针并绑定"联通-测试线"（id=1，楼层"测试楼层"=10.8.14.0/23，网关 10.8.15.253，真实出口 HTTP 实测 ≈24.7Mbps）；22 项功能测试全过（四类告警演练/测速全链路/邮件+IM mock 推送/静默/RBAC/报表/CSV 导入/SSH 运维/WS 终端/内置监控/审计）；**发现并修复 6 项缺陷**（见 §7 坑 15-17、坑 4/11 补充与 docs/07 §3），修复**已 commit 未 push**。管理员已建：**admin / [初始管理员口令]**（代跑 setup 向导，用户可改密）。演练告警记录保留（全部 resolved）。viewer 账号（[观察者口令见现场台账]）保留。
+**2026-11-06 行业网监测功能上线（已发布生产）**：中心对管理员配置 IP（10.5 网段）**仅 ICMP ping**（不做其他探测以免被封），独立引擎 internal/server/industry.go（settings 键 industry_monitors，指标 nw_industry_*，告警 industry_down P2 连续 3 次失败/删除收口），总览新卡+探测历史 type=industry；顺带修复 history rttAt 键 bug（monitor/industry 类 RTT 恒 0）。**重要：生产 server unit 原缺 CAP_NET_RAW，非 root 下所有中心 ICMP（含旧内→内监控 icmp 类型）都会 EPERM 失败——已补 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW 双能力并回环实测 0.23ms 打通**，模板（install-server.sh/systemd/）同步。
 额外完成的二期功能：IM 告警通道（钉钉/企微）、双探针交叉验证、压测回放（cmd/loadgen）、SNMP 真实流量采集、探针零接触运维（SSH 凭据后台管理+网页终端）、外网组官网探测（含证书检测）、内→内内置监控（中心自探，Uptime Kuma 模式）、探测历史逐条查询（PRTG 风格，/history 页）。
 **2026-11-06 前端信息架构重排（已发布到 10.8.14.200）**：侧栏分「监控展示 / 配置管理」两组；探针拆为 探针状态(/probes，只读+15s 刷新) 与 探针管理(/probes/manage)；系统设置由 445 行单页拆为页内 6 Tab 子路由（web/src/views/settings/：notify 命令/alert 策略/probe 探测/collect 采集测速/report 报表/account 用户审计），审计日志归位 account、静默窗口自告警中心移入 alert；告警中心纯展示。后端 API 零改动；生产发布仅换 web/dist（静态按请求 ServeFile，**web-only 发布无需重启 server**）。（注：当时并行的 egress_ip Go 改动已由后续提交 4874599 完成落地，go build 恢复通过。）
 **2026-11-06 数据库文档成册（docs/09）**：结构/指标/运维配方详见该册；生产 settings 表仅 9 键（令牌未落库，实际生效=unit 环境变量）。
@@ -88,7 +89,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 - **机器**：全新专用服务器，麒麟 V10 (Halberd) x86_64，2C/2.8G/17G（内存偏紧，VM 缓存已限 20%），IP **10.8.14.200**，SELinux Disabled，firewalld 已放行 80/tcp。**无 Docker**。
 - **项目路径**：`/root/network-monitor`（git clone，main 分支）；**部署根**：`/opt/netwatch`（bin/ web/ vmdata/ data/，属主 netwatch 系统用户）。
-- **服务（全部 systemd enabled 开机自启）**：`postgresql`（yum PG **10.5**，/var/lib/pgsql/data，hba 127.0.0.1 改 md5）· `victoriametrics`（v1.102.1 单二进制，`-memory.allowedPercent=20 -retentionPeriod=90d`，:8428）· `netwatch-server`（**0.0.0.0:80**，非 root 绑 80 靠单元内 `AmbientCapabilities=CAP_NET_BIND_SERVICE`）。
+- **服务（全部 systemd enabled 开机自启）**：`postgresql`（yum PG **10.5**，/var/lib/pgsql/data，hba 127.0.0.1 改 md5）· `victoriametrics`（v1.102.1 单二进制，`-memory.allowedPercent=20 -retentionPeriod=90d`，:8428）· `netwatch-server`（**0.0.0.0:80**，非 root 绑 80 与 ICMP 靠单元内 `AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW`）。
 - **env（在 /etc/systemd/system/netwatch-server.service）**：`NW_LISTEN=:80`、`NW_DB=postgres://netwatch:<随机口令>@127.0.0.1:5432/netwatch?sslmode=disable`（口令在 `/opt/netwatch/.pg-pass` 0600）、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=<随机>`（`/opt/netwatch/.enroll-token` 0600）、`NW_WEB_DIR=/opt/netwatch/web/dist`、`NW_DATA_DIR=/opt/netwatch/data`。
 - **本机工具链**：Go 1.26.10（/usr/local/go，go.mod 实际要求 1.26 而非旧记的 1.23）、Node 20.18.1（/usr/local/lib/nodejs，软链 /usr/local/bin）。国内源：GOPROXY=goproxy.cn、npm=npmmirror、Go/Node 包=mirrors.aliyun.com、GitHub 走 `https://ghfast.top/` 前缀（直连不通）。
 - **待办（用户侧）**：setup 向导未跑（`/api/admin/setup` 返回 initialized:false，管理员未建）；探针 0 台待用户配置；真实 SMTP/IM/SNMP 未配。本次部署**未 git push**。
@@ -100,8 +101,8 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 ## 6. 数据模型与指标速查
 
 **PG 表**：floors / lines（public_ip 由探针自动探测回填：探针每 5min 访问 IP 回显服务、随心跳上报、中心对账纠偏，手工值仅作探测全挂时兜底）/ probes（含 name、grp、ssh_*、pending_version）/ alerts / silences / reports / audit / agent_releases / users / settings。
-**settings 键**：agent_config（内网组探测配置）、agent_config_external（外网组）、internal_monitors（内→内内置监控）、smtp、alert_settings、speed_settings、report_settings、notify_channels、snmp_settings、agent.enroll_token。
-**VM 指标**：nw_ping_{rtt_ms,ok,loss_pct}{class=gw|public}、nw_tcp_*、nw_dns_*、nw_http_{ttfb_ms,ok,code,cert_days}、nw_speed_{down,up}_mbps、nw_snmp_{in,out}_bps{line}、nw_monitor_{ok,rtt_ms}{monitor,type}（内→内）。标签：probe/line/target/monitor。
+**settings 键**：agent_config（内网组探测配置）、agent_config_external（外网组）、internal_monitors、industry_monitors（行业网监测，仅 ICMP）（内→内内置监控）、smtp、alert_settings、speed_settings、report_settings、notify_channels、snmp_settings、agent.enroll_token。
+**VM 指标**：nw_ping_{rtt_ms,ok,loss_pct}{class=gw|public}、nw_tcp_*、nw_dns_*、nw_http_{ttfb_ms,ok,code,cert_days}、nw_speed_{down,up}_mbps、nw_snmp_{in,out}_bps{line}、nw_monitor_{ok,rtt_ms}{monitor,type}（内→内）。标签：probe/line/target/monitor。、nw_industry_{ok,rtt_ms}{industry}（行业网监测，中心仅 ICMP）
 **协议新增（2026-11-06）**：Heartbeat.PublicIP/IPISP/IPGeo/IPv6/CPUPct/MemPct/DiskPct/AgentTS/SysInfo、ProbeConfig.IPEchoURLs（回显服务池，空=探针内置默认 ip.3322.net/members.3322.org/v4.ident.me/myip.ipip.net）——只增字段，新旧兼容。线路出口属性（public_ip/isp/geo）全部探针自动探测对账回填（手工值仅回显全挂时兜底；lines 手工更新对这三个字段空值不覆盖）；probes.sysinfo JSONB 存资产（心跳补报，不重注册也能刷新）；P2 probe_resource=探针内存/磁盘>90% 连续 3 心跳。证伪：DNS 出口 IP 检测不可用（公共递归返回自身出口 123.6.27.94≠线路出口）。
 **探针名称**：RegisterReq.Name（install-agent.sh 第 4 参数/-name 传入），注册时落 probes.name；告警邮件/探针列表/未绑定区均显示名称。**注意**：外网组探针不计入 unbound 警告（overviewData 已过滤）。
 
@@ -161,6 +162,7 @@ python3 /tmp/mock_webhook.py &         # http 18099（notify_channels 的钉钉/
 | P1 | floor_down | 网关连续 3 次失败 |
 | P1 | site_down | 外网组全部探针 HTTPS 失败（投票） |
 | P2 | monitor_down | 内→内内置监控连续 3 次失败（中心自探，恢复即解除；目标删除自动收口） |
+| P2 | industry_down | 行业网监测：中心对配置 IP 仅 ICMP ping，连续 3 次失败（恢复即解除；目标删除自动收口） |
 | P2 | degraded/probe_conflict/speed_low/site_conflict/cert_expiring | 见代码 |
 
 通用机制：静默窗口（30s 缓存）、恢复通知、迟滞、按级别收件组、IM 恒推 P0/P1。降质=按目标丢包**下中位数**（抗单坏目标）。状态汇总 statusOrder 确定性顺序（degraded/speed_low 同 rank）。

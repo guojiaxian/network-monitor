@@ -243,6 +243,7 @@ func (s *Store) seedSettings(ctx context.Context) error {
 		"notify_channels":        DefaultNotifyChannels(),
 		"snmp_settings":          DefaultSnmpSettings(),
 		"internal_monitors":      DefaultMonitorSettings(),
+		"industry_monitors":      DefaultIndustrySettings(),
 	}
 	for k, v := range defaults {
 		b, _ := json.Marshal(v)

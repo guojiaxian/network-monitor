@@ -26,6 +26,7 @@ const (
 	KindCertExpire = "cert_expiring"  // P2 HTTPS 证书即将过期
 	KindMonitorDown  = "monitor_down"  // P2 内网服务不可达（中心内置监控）
 	KindProbeRes     = "probe_resource" // P2 探针资源紧张（探针 VM 自身内存/磁盘 >90%）
+	KindIndustryDown = "industry_down"  // P2 行业网不可达（中心对行业网 IP 仅 ICMP ping）
 )
 
 var kindSeverity = map[string]string{
@@ -40,6 +41,7 @@ var kindSeverity = map[string]string{
 	KindCertExpire: "P2",
 	KindMonitorDown: "P2",
 	KindProbeRes:   "P2",
+	KindIndustryDown: "P2",
 }
 
 var kindTitle = map[string]string{
@@ -54,6 +56,7 @@ var kindTitle = map[string]string{
 	KindCertExpire: "HTTPS 证书即将过期",
 	KindMonitorDown: "内网服务不可达",
 	KindProbeRes:   "探针资源紧张（内存/磁盘使用率超 90%）",
+	KindIndustryDown: "行业网不可达",
 }
 
 // AlertMeta 告警关联元信息（渲染邮件用）
@@ -1098,6 +1101,77 @@ func (e *Engine) CleanMonitors(liveNames map[string]bool) {
 				}
 				cancel()
 				e.log.Printf("RESOLVED [monitor_down] %s（目标已删除）", name)
+			}
+		}
+	}
+}
+
+// FireIndustry 行业网监测触发告警（industry runner 调用）
+func (e *Engine) FireIndustry(fp string, it IndustryItem, detail string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, ok := e.live[fp]; ok {
+		return
+	}
+	meta := AlertMeta{
+		Kind: KindIndustryDown, Severity: kindSeverity[KindIndustryDown],
+		Title: "行业网不可达：" + it.Name, ProbeID: "center",
+		StartsAt: time.Now(), ExtraHTML: detail,
+	}
+	if e.silenced(0) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	row := &AlertRow{Fingerprint: fp, Severity: meta.Severity, Kind: meta.Kind,
+		Title: "行业网监测：" + meta.Title, ProbeID: "center", StartsAt: meta.StartsAt}
+	id, err := e.store.CreateAlert(ctx, row)
+	if err != nil {
+		e.log.Printf("persist alert %s: %v", fp, err)
+	}
+	e.live[fp] = &liveAlert{rowID: id, meta: meta, firing: time.Now()}
+	e.log.Printf("ALERT P2 [industry_down] %s (%s)", it.Name, it.Target)
+	e.sendMail(meta, true)
+}
+
+// ResolveIndustry 行业网监测告警解除
+func (e *Engine) ResolveIndustry(fp string, it IndustryItem, reason string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	la, ok := e.live[fp]
+	if !ok {
+		return
+	}
+	delete(e.live, fp)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if la.rowID > 0 {
+		if err := e.store.ResolveAlert(ctx, la.rowID); err != nil {
+			e.log.Printf("resolve alert %s: %v", fp, err)
+		}
+	}
+	la.meta.ExtraHTML = reason
+	e.log.Printf("RESOLVED [industry_down] %s", it.Name)
+	e.sendMail(la.meta, false)
+}
+
+// CleanIndustries 行业网监测配置变更后：清理已删除目标的进行中告警与状态
+func (e *Engine) CleanIndustries(liveNames map[string]bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for fp, la := range e.live {
+		if la.meta.Kind == KindIndustryDown {
+			name := fp[len(KindIndustryDown)+1:]
+			if !liveNames[name] {
+				delete(e.live, fp)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if la.rowID > 0 {
+					if err := e.store.ResolveAlert(ctx, la.rowID); err != nil {
+						e.log.Printf("resolve alert %s: %v", fp, err)
+					}
+				}
+				cancel()
+				e.log.Printf("RESOLVED [industry_down] %s（目标已删除）", name)
 			}
 		}
 	}

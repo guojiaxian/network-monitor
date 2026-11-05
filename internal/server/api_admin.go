@@ -31,6 +31,7 @@ type AdminAPI struct {
 	sched    *SpeedSched
 	rep      *Reporter
 	mon      *MonitorRunner
+	ind      *IndustryRunner
 	tsdb     *TSDB
 	sessMu   sync.Mutex
 	sessions map[string]nwSession
@@ -46,8 +47,8 @@ type ctxKey int
 
 const ctxUserKey ctxKey = 1
 
-func NewAdminAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched, rep *Reporter, mon *MonitorRunner, tsdb *TSDB) *AdminAPI {
-	return &AdminAPI{cfg: cfg, store: store, eng: eng, sched: sched, rep: rep, mon: mon, tsdb: tsdb,
+func NewAdminAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched, rep *Reporter, mon *MonitorRunner, ind *IndustryRunner, tsdb *TSDB) *AdminAPI {
+	return &AdminAPI{cfg: cfg, store: store, eng: eng, sched: sched, rep: rep, mon: mon, ind: ind, tsdb: tsdb,
 		sessions: map[string]nwSession{}}
 }
 
@@ -285,8 +286,8 @@ var statusRank = map[string]int{
 // statusOrder 同级别的展示名取确定性顺序（map 遍历无序，避免 degraded/speed_low 随机跳变）
 var statusOrder = []string{"blind", "floor_down", "down", "conflict", "degraded", "speed_low", "online", "unknown"}
 
-// overviewData 总览数据构建（管理端与大屏共用）。mon 为内置监控（可为 nil）。
-func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRunner) (map[string]any, error) {
+// overviewData 总览数据构建（管理端与大屏共用）。mon/ind 为中心侧监测引擎（可为 nil）。
+func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRunner, ind *IndustryRunner) (map[string]any, error) {
 	lines, err := store.ListLines(ctx)
 	if err != nil {
 		return nil, err
@@ -393,12 +394,18 @@ func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRu
 		monSnapshot = mon.Snapshot()
 	}
 
+	// 行业网监测（中心对行业网 IP 仅 ICMP ping）
+	indSnapshot := []IndustryStatus{}
+	if ind != nil {
+		indSnapshot = ind.Snapshot()
+	}
+
 	return map[string]any{"lines": ovs, "unbound_probes": unbound,
 		"external_probes": extProbes, "external_status": extStatus,
-		"internal_monitors": monSnapshot}, nil
+		"internal_monitors": monSnapshot, "industry_monitors": indSnapshot}, nil
 }
 func (a *AdminAPI) overview(w http.ResponseWriter, r *http.Request) {
-	out, err := overviewData(r.Context(), a.store, a.eng, a.mon)
+	out, err := overviewData(r.Context(), a.store, a.eng, a.mon, a.ind)
 	if err != nil {
 		httpError(w, 500, "db")
 		return
@@ -695,7 +702,8 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	allowed := map[string]bool{"agent_config": true, "smtp": true, "alert_settings": true,
 		"agent.enroll_token": true, "speed_settings": true, "report_settings": true,
-		"notify_channels": true, "snmp_settings": true, "agent_config_external": true, "internal_monitors": true}
+		"notify_channels": true, "snmp_settings": true, "agent_config_external": true,
+		"internal_monitors": true, "industry_monitors": true}
 	for k, v := range body {
 		if !allowed[k] {
 			continue
@@ -723,6 +731,21 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				seen[it.Name] = true
+			}
+		}
+		if k == "industry_monitors" {
+			var im IndustrySettings
+			if json.Unmarshal(v, &im) != nil {
+				httpError(w, 400, "industry_monitors 格式错误")
+				return
+			}
+			for i := range im.Items {
+				im.Items[i].Name = strings.TrimSpace(im.Items[i].Name)
+				im.Items[i].Target = strings.TrimSpace(im.Items[i].Target)
+			}
+			if err := ValidateIndustrySettings(&im); err != nil {
+				httpError(w, 400, err.Error())
+				return
 			}
 		}
 		var check any
@@ -1447,6 +1470,18 @@ type HistoryRecord struct {
 
 // history 探测历史查询：GET /api/admin/history?type=&probe=&target=&start=&end=&limit=
 // type: ping/tcp/dns/http/monitor/speed。合并 ok 与 rtt 序列，按时间倒序返回。
+// nameKey 历史记录的名称键：常规序列取 target 标签；中心侧 monitor/industry
+// 序列无 target，名称分别在 monitor/industry 标签里。
+func nameKey(m map[string]string) string {
+	if v := m["target"]; v != "" {
+		return v
+	}
+	if v := m["monitor"]; v != "" {
+		return v
+	}
+	return m["industry"]
+}
+
 func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	typ := q.Get("type")
@@ -1489,19 +1524,26 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 		okMetric, rttMetric = "nw_http_ok", "nw_http_ttfb_ms"
 	case "monitor":
 		okMetric, rttMetric = "nw_monitor_ok", "nw_monitor_rtt_ms"
+	case "industry":
+		okMetric, rttMetric = "nw_industry_ok", "nw_industry_rtt_ms"
 	case "speed":
 		okMetric, rttMetric = "nw_speed_down_mbps", ""
 	default:
-		httpError(w, 400, "type 必须为 ping/tcp/dns/http/monitor/speed")
+		httpError(w, 400, "type 必须为 ping/tcp/dns/http/monitor/industry/speed")
 		return
 	}
 
-	// monitor 类型无 probe 标签，按 monitor 名过滤（target=名称）；其余按探针过滤
+	// monitor/industry 类型无 probe 标签，按名称过滤（target=名称）；其余按探针过滤
 	var sel string
 	if typ == "monitor" {
 		sel = `{monitor!=""}`
 		if target != "" {
 			sel = `{monitor="` + target + `"}`
+		}
+	} else if typ == "industry" {
+		sel = `{industry!=""}`
+		if target != "" {
+			sel = `{industry="` + target + `"}`
 		}
 	} else {
 		sel = `{probe="` + probe + `"`
@@ -1523,14 +1565,16 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 		rttSeries, _ = a.tsdb.Export(ctx, rttMetric+sel, start, end)
 	}
 
-	// ok 序列：每条 = 一次探测记录；rtt/code/证书按 (target,ts) 关联
+	// ok 序列：每条 = 一次探测记录；rtt/code/证书按 (target,ts) 关联。
+	// monitor/industry 序列无 target 标签，名称在 monitor/industry 标签里——
+	// 关联键统一用 nameKey（target→monitor→industry 依次取），否则 RTT 恒为 0。
 	records := []HistoryRecord{}
 	targets := map[string]bool{}
 	rttAt := map[string]float64{}
 	for _, s := range rttSeries {
 		for i, v := range s.Values {
 			if i < len(s.Timestamps) {
-				rttAt[s.Metric["target"]+"|"+strconv.FormatInt(s.Timestamps[i], 10)] = v
+				rttAt[nameKey(s.Metric)+"|"+strconv.FormatInt(s.Timestamps[i], 10)] = v
 			}
 		}
 	}
@@ -1555,10 +1599,7 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, s := range okSeries {
-		tgt := s.Metric["target"]
-		if tgt == "" {
-			tgt = s.Metric["monitor"]
-		}
+		tgt := nameKey(s.Metric)
 		targets[tgt] = true
 		for i, v := range s.Values {
 			if i >= len(s.Timestamps) {

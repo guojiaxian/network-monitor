@@ -178,6 +178,8 @@ Environment=NW_DATA_DIR=$ROOT/data
 ExecStart=$ROOT/bin/netwatch-server
 Restart=always
 RestartSec=5
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

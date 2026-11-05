@@ -62,6 +62,28 @@
       </div>
     </div>
 
+    <div class="nw-card mb-3">
+      <div class="d-flex align-items-center mb-2">
+        <h6 class="mb-0">🛰️ 行业网监测</h6>
+        <StatusBadge :status="indUp ? 'online' : (indMons.length ? 'down' : 'unknown')" class="ms-3" />
+        <span class="text-secondary small ms-auto">中心服务器对行业网 IP 仅 ICMP ping（不做其他探测）</span>
+      </div>
+      <div v-if="indMons.length" class="row g-2">
+        <div class="col-md-4" v-for="m in indMons" :key="m.name">
+          <div class="border rounded p-2 d-flex align-items-center gap-2">
+            <StatusBadge :status="!m.known ? 'unknown' : (m.up ? 'online' : 'down')" />
+            <div class="small">
+              <b>{{ m.name }}</b><br />
+              <span class="text-secondary">{{ indDesc(m) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-else class="text-secondary small py-3 text-center">
+        暂无行业网监测目标。到「系统设置 → 探测配置 → 行业网监测」添加（仅 ICMP，如 10.5.x.x 的核心设备地址）。
+      </div>
+    </div>
+
     <h5 class="mb-3 mt-2">🔀 内网 → 外网 · 宽带线路</h5>
     <div v-if="!lines.length && !err" class="nw-card text-center py-5 text-secondary">
       尚未录入线路。请先到 <router-link to="/lines">线路配置</router-link> 完成配置，再在
@@ -99,10 +121,19 @@ import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
 import HeartbeatBar from '../components/HeartbeatBar.vue'
 
-const lines = ref([]), unbound = ref([]), extProbes = ref([]), extStatus = ref('unknown'), monitors = ref([]), err = ref('')
+const lines = ref([]), unbound = ref([]), extProbes = ref([]), extStatus = ref('unknown'), monitors = ref([]), indMons = ref([]), err = ref('')
 let timer = null
 
 const monitorsUp = computed(() => monitors.value.length > 0 && monitors.value.every(m => m.up))
+const indUp = computed(() => indMons.value.length > 0 && indMons.value.every(m => m.up))
+
+function indDesc(m) {
+  if (!m.known) return '等待首次探测…'
+  const parts = []
+  if (m.rtt_ms) parts.push(m.rtt_ms.toFixed(1) + 'ms')
+  parts.push(m.target)
+  return parts.join(' · ')
+}
 
 function monDesc(m) {
   if (!m.known) return '等待首次探测…'
@@ -155,6 +186,7 @@ async function load() {
     extProbes.value = d.external_probes || []
     extStatus.value = d.external_status || 'unknown'
     monitors.value = d.internal_monitors || []
+    indMons.value = d.industry_monitors || []
     err.value = ''
   } catch (e) { err.value = e.message }
 }
