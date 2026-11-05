@@ -64,7 +64,7 @@ dist/             make dist 交付包（netwatch-0.2.tar.gz + sha256）
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin GOPROXY=https://goproxy.cn,direct   # Go 1.23.12 装在 /usr/local/go
-cd /root/network-monitor            # 必须先 cd，shell 的 cwd 会漂移（沙箱特性，见 §7）
+cd /root/applications/network-monitor   # 必须先 cd，shell 的 cwd 会漂移（沙箱特性，见 §7）；2026-11-02 项目由 /root/network-monitor 迁移至此
 make build        # agent+server+web（web 用 npmmirror）
 make test         # go test ./...
 make dist         # 交付包 dist/netwatch-0.2.tar.gz
@@ -76,11 +76,12 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 5. 演示/测试环境（当前运行态）
 
-- **中心端**：0.0.0.0:18003（局域网经 http://10.8.11.4:18003 访问；2026-10-31 由 18003 改端口），env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch...`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=web/dist`、`NW_DATA_DIR=data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
+- **项目路径**：2026-11-02 项目由 /root/network-monitor 整体迁移至 **/root/applications/network-monitor**（PG/VM 数据无变化）。迁移当日的坑：server 以旧绝对路径 env（NW_WEB_DIR/NW_DATA_DIR）重启过一次导致前端 404；两个探针 state 身份丢失按新 ID 重注册（旧孤儿行已删）；agent1 systemd unit 的 -server 端口未跟随 28765→18003 改动。均已修复。
+- **中心端**：0.0.0.0:18003（局域网经 http://10.8.11.4:18003 访问；2026-10-31 由 28765 改 18003），env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=/root/applications/network-monitor/web/dist`、`NW_DATA_DIR=/root/applications/network-monitor/data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
 - **依赖容器**（docker）：`nwtest-pg`（PG16，宿主 5433）、`nwtest-vm`（VictoriaMetrics v1.102.1，宿主 8428）。
-- **探针**：agent1 = root 进程，state /tmp/nw-agent，绑"联通1号线"（internal 组，改名"1楼-东配线间"）；agent2 = **uid 1234** 进程（`setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw`，state /tmp/nw-agent2 **属主必须 1234**），现为**外网组**（external），探测 baidu HTTPS。
-- **账号**：admin/netwatch123（管理员）、viewer1/viewer12345（观察者）。**会话存内存，server 重启后需重新登录**（`curl -c` 存 /tmp/nw-ck 或读 /tmp/nw-tok）。
-- **测试辅助**：/tmp/sshmockd 2222 端口（root/Op@2026!x，已含 PTY 假shell）；SNMP 模拟器 /tmp/mock_snmp.py（udp 1161，community public，注入 300/30Mbps）；两者可能已被停掉，重启命令在文件头注释/本文件 §8。
+- **探针**：agent1 = systemd 服务 netwatch-agent（/usr/local/bin/netwatch-agent，state /var/lib/netwatch-agent，id e578107e47e11d94），改名"1楼-东配线间"、绑"联通1号线"（internal 组）；agent2 = **uid 1234** 进程（`setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw`，state /tmp/nw-agent2 **属主必须 1234**，id 600758069d6a6ea6），现为**外网组**（external，名字"外网探针"），探测 baidu HTTPS。**探针身份丢失会自动重注册新 ID**，改名/绑线/分组需在后台重做，DB 孤儿行手动删。
+- **账号**：admin/netwatch123（管理员）、viewer1/viewer12345（观察者，2026-11-02 迁移检查时重建）。**会话存内存，server 重启后需重新登录**（`curl -c` 存 /tmp/nw-ck 或读 /tmp/nw-tok）。
+- **测试辅助**：/tmp/sshmockd 2222 端口（root/Op@2026!x，已含 PTY 假shell）；SNMP 模拟器 /tmp/mock_snmp.py（udp 1161，community public，注入 300/30Mbps）；IM webhook 模拟器 /tmp/mock_webhook.py（http 18099，notify_channels 指向它）；三者可能已被停掉，重启命令见本文件 §8。
 
 ## 6. 数据模型与指标速查
 
@@ -92,7 +93,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 ## 7. 踩坑记录（新 agent 必读，避免重复排查）
 
 1. **改 server 代码后忘记重启进程**→表现为"新功能 404/行为不变"。先 `ss -tlnp | grep 18003` 确认进程启动时间。
-2. **Bash 工具的 shell cwd 会漂移**：相对路径 `./bin/...` 偶发 "command not found"（exit 127）。**永远先 `cd /root/network-monitor`**。
+2. **Bash 工具的 shell cwd 会漂移**：相对路径 `./bin/...` 偶发 "command not found"（exit 127）。**永远先 `cd /root/applications/network-monitor`**。
 3. **pkill -f 匹配会把执行 shell 自己也杀掉**（命令行含相同字符串）；用 `ps -eo user,pid,cmd | grep 'netwatch-agen[t]'` 后按 PID kill。
 4. **gosnmp**：返回的 OID 带**前导点**（`.1.3.6...`），OctetString 是 `[]byte` 不是 string，Counter64 值就是 uint64（gosnmp.Counter64 是常量不是类型）。
 5. **VM 即时查询**（/api/v1/query）有 ~30s latencyOffset，刚写入的数据查不到属正常；export/range_query 不受影响。**回填数据后立即生成报表可能查不到**（索引未刷新），稍等再生成即可。
@@ -110,16 +111,18 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 ## 8. 常用操作配方
 
 ```bash
-# 重启中心端（演示）
-cd /root/network-monitor && NW_LISTEN=127.0.0.1:18003 NW_DB='postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable' NW_VM_URL='http://127.0.0.1:8428' NW_ENROLL_TOKEN=test-token NW_WEB_DIR=/root/network-monitor/web/dist NW_DATA_DIR=/root/network-monitor/data ./bin/netwatch-server > /tmp/nw-server.log 2>&1 &
+# 重启中心端（演示）—— 先 ps 精确 kill 旧 PID（勿用 pkill -f，见坑 3）
+cd /root/applications/network-monitor && NW_LISTEN=0.0.0.0:18003 NW_DB='postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable' NW_VM_URL='http://127.0.0.1:8428' NW_ENROLL_TOKEN=test-token NW_WEB_DIR=/root/applications/network-monitor/web/dist NW_DATA_DIR=/root/applications/network-monitor/data ./bin/netwatch-server > /tmp/nw-server.log 2>&1 &
 # 重启 agent2（外网组，uid 1234）
-NW_SERVER=http://127.0.0.1:18003 NW_ENROLL_TOKEN=test-token NW_STATE_DIR=/tmp/nw-agent2 setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw ./bin/netwatch-agent > /tmp/nw-agent2.log 2>&1 &
-# 登录取 token
-TOK=$(curl -s -c - -X POST http://127.0.0.1:18003/api/admin/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"netwatch123"}' | grep nw_session | awk '{print $NF}')
-# 压测回填 / SNMP mock / SSH mock
-./bin/loadgen -server http://127.0.0.1:18003 -token test-token -probes 12 -backfill 7
+cd /root/applications/network-monitor && NW_SERVER=http://127.0.0.1:18003 NW_ENROLL_TOKEN=test-token NW_STATE_DIR=/tmp/nw-agent2 setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw ./bin/netwatch-agent > /tmp/nw-agent2.log 2>&1 &
+# agent1 由 systemd 管理：改端口/参数需 sed /etc/systemd/system/netwatch-agent.service 后 daemon-reload + restart
+# 登录取会话（Cookie 存 /tmp/nw-ck，后续请求 -b /tmp/nw-ck；会话鉴权用 Cookie nw_session，非自定义头）
+curl -s -c /tmp/nw-ck -X POST http://127.0.0.1:18003/api/admin/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"netwatch123"}'
+# 压测回填 / SNMP mock / SSH mock / IM webhook mock
+cd /root/applications/network-monitor && ./bin/loadgen -server http://127.0.0.1:18003 -token test-token -probes 12 -backfill 7
 python3 /tmp/mock_snmp.py &            # udp 1161
 /tmp/sshmockd 2222 root 'Op@2026!x' &
+python3 /tmp/mock_webhook.py &         # http 18099（notify_channels 的钉钉/企微测试目标）
 ```
 
 ## 9. 告警语义速查（判定逻辑在 internal/server/alert.go evaluate）
@@ -150,7 +153,7 @@ python3 /tmp/mock_snmp.py &            # udp 1161
 
 - 仓库：`git@github.com:guojiaxian/network-monitor.git`（main 分支），2026-10-31 首推（v0.2 全量，75 文件）。
 - .gitignore 覆盖：bin/、dist/（make dist 重建）、data/（**含 ssh-master.key 严禁入库**）、web/dist、web/node_modules。
-- agent1 从本轮起由 systemd 管理（/usr/local/bin + /var/lib/netwatch-agent，id b0f93f84...，绑定联通1号线）；沙箱 /tmp 身份目录丢失即自动重注册，旧行手动删。
+- agent1 由 systemd 管理（/usr/local/bin + /var/lib/netwatch-agent，2026-11-02 迁移检查后 id e578107e47e11d94，绑定联通1号线）；身份目录丢失即自动重注册新 ID，旧行手动删。
 - 发布流程：改代码 → make test → make dist → git commit/push。
 
 ## 13. 给下一个 AI agent 的行为约定
