@@ -29,6 +29,11 @@ body {
 }
 .nw-sidebar a:hover { background: rgba(255,255,255,.06); color: #fff; }
 .nw-sidebar a.router-link-active { background: var(--nw-sidebar-active); color: #fff; }
+.nw-sidebar .nw-nav-group {
+  font-size: .72rem; letter-spacing: 2px; color: #6c7887;
+  padding: 12px 12px 4px; border-top: 1px solid rgba(255,255,255,.08);
+  margin-top: 10px;
+}
 .nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #6c7887; padding: 8px 12px; }
 
 .nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; }
@@ -75,5 +80,9 @@ body {
 .line-card:hover { box-shadow: 0 3px 10px rgba(16,24,40,.10); }
 
 .stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+
+/* 系统设置页内 Tab 导航（Bootstrap pills + router-link 激活态） */
+.nw-tabs .nav-link { color: #495057; padding: 6px 14px; font-size: .92rem; }
+.nw-tabs .nav-link.router-link-active { background: var(--nw-sidebar-active); color: #fff; }
 
 table.nw-table td, table.nw-table th { vertical-align: middle; }

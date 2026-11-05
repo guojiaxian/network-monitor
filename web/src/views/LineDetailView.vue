@@ -29,7 +29,7 @@
     <div class="nw-card mt-3" v-if="line.contract_down_mbps > 0 || true">
       <div class="d-flex align-items-center">
         <h6 class="mb-0">近 24 小时真实流量（SNMP，上下行 Mbps）</h6>
-        <span class="text-secondary small ms-auto" v-if="!snmpHasData">未启用 SNMP 采集或暂无数据（可在系统设置中开启）</span>
+        <span class="text-secondary small ms-auto" v-if="!snmpHasData">未启用 SNMP 采集或暂无数据（可在 系统设置 → 采集与测速 开启）</span>
       </div>
       <div style="height: 220px" class="mt-2"><canvas id="snmpChart"></canvas></div>
     </div>

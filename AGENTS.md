@@ -16,6 +16,7 @@
 **2026-11-05 正式中心端已上电**：全新专用麒麟 V10 服务器（10.8.14.200）原生部署完成（无 Docker，PG/VM 均本机 systemd），server 监听 **0.0.0.0:80**，开机自启，端到端验证通过。
 **2026-11-05/06 现场单探针全功能测试完成（报告=docs/07）**：探针服务器 **10.8.14.201**（麒麟 V10 1C1G，root 密码 `[探针root口令见现场授权台账]`，用户授权 SSH）install-agent.sh 一键装探针并绑定"联通-测试线"（id=1，楼层"测试楼层"=10.8.14.0/23，网关 10.8.15.253，真实出口 HTTP 实测 ≈24.7Mbps）；22 项功能测试全过（四类告警演练/测速全链路/邮件+IM mock 推送/静默/RBAC/报表/CSV 导入/SSH 运维/WS 终端/内置监控/审计）；**发现并修复 6 项缺陷**（见 §7 坑 15-17、坑 4/11 补充与 docs/07 §3），修复**已 commit 未 push**。管理员已建：**admin / [初始管理员口令]**（代跑 setup 向导，用户可改密）。演练告警记录保留（全部 resolved）。viewer 账号（[观察者口令见现场台账]）保留。
 额外完成的二期功能：IM 告警通道（钉钉/企微）、双探针交叉验证、压测回放（cmd/loadgen）、SNMP 真实流量采集、探针零接触运维（SSH 凭据后台管理+网页终端）、外网组官网探测（含证书检测）、内→内内置监控（中心自探，Uptime Kuma 模式）、探测历史逐条查询（PRTG 风格，/history 页）。
+**2026-11-06 前端信息架构重排（已发布到 10.8.14.200）**：侧栏分「监控展示 / 配置管理」两组；探针拆为 探针状态(/probes，只读+15s 刷新) 与 探针管理(/probes/manage)；系统设置由 445 行单页拆为页内 6 Tab 子路由（web/src/views/settings/：notify 命令/alert 策略/probe 探测/collect 采集测速/report 报表/account 用户审计），审计日志归位 account、静默窗口自告警中心移入 alert；告警中心纯展示。后端 API 零改动；生产发布仅换 web/dist（静态按请求 ServeFile，**web-only 发布无需重启 server**）。注意：工作区另有并行会话的 Go WIP（egress_ip 出口 IP 功能，go build 暂不过），提交时严禁混入。
 
 **剩余现场实施事项**：
 1. 12 台楼层探针 VM（`deploy/install-agent.sh` 单台 / `batch-install-probes.sh` 批量，**先绑定线路再启用**）；已在 10.8.14.201 真实麒麟主机全流程实测通过；
@@ -52,8 +53,10 @@ internal/server/  config.go store.go(全部SQL) tsdb.go(VM写入+查询) alert.g
                   speedsched.go report.go(日报周报) snmp.go notify.go(DingTalk/企微)
                   sshterm.go(网页终端WS桥) sshops.go(SSH运维+AES加密) api_agent.go api_admin.go
                   api_screen.go + *_test.go(丢包中位数/CSV/decideLine/SSH进程内服务器测试)
-web/              Vue3 前端（src/views: Setup/Login/Dashboard/Lines/LineDetail/Probes/
-                  SshTerm(xterm.js)/Alerts/Reports/Settings + components: StatusBadge/HeartbeatBar）
+web/              Vue3 前端（src/views: Setup/Login/Dashboard/Lines/LineDetail/ProbesStatus/
+                  ProbesManage/SshTerm(xterm.js)/Alerts/History/Reports/Screen +
+                  views/settings/: SettingsLayout+Notify/Alert/Probe/Collect/Report/Account 六 Tab +
+                  components: StatusBadge/HeartbeatBar；utils.js 公共小工具）
 deploy/           install-server.sh(一键中心部署:环境检查+自动装PG/VM/chrony+自验证,CHECK_ONLY=1预检)
                   install-agent.sh(一键探针:对时+连通性+安装+注册确认) batch-install-probes.sh
                   systemd/*.service docker-compose.yml server.Dockerfile

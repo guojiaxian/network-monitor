@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h4 class="mb-3">线路与楼层</h4>
+    <h4 class="mb-3">线路与楼层配置</h4>
 
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
@@ -47,7 +47,7 @@
 
       <div class="row g-2 align-items-end">
         <div class="col-md-2"><label class="form-label small mb-1">线路名</label><input v-model="nl.name" class="form-control form-control-sm" /></div>
-        <div class="col-md-2"><label class="form-label small mb-1">出口公网 IP</label><input v-model="nl.public_ip" class="form-control form-control-sm" /></div>
+        <div class="col-md-2"><label class="form-label small mb-1">出口公网 IP</label><input v-model="nl.public_ip" class="form-control form-control-sm" placeholder="留空=探针自动探测" /></div>
         <div class="col-md-1"><label class="form-label small mb-1">下行M</label><input v-model.number="nl.contract_down_mbps" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-1"><label class="form-label small mb-1">上行M</label><input v-model.number="nl.contract_up_mbps" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-2">
