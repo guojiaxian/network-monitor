@@ -152,7 +152,10 @@ func (a *AgentAPI) heartbeat(w http.ResponseWriter, r *http.Request) {
 	if hb.Version != "" {
 		a.store.ClearProbePendingIfMatch(r.Context(), agentID, hb.Version)
 	}
-	a.eng.OnHeartbeat(agentID, hb.Version, hb.PublicIP)
+	if len(hb.SysInfo) > 0 {
+		a.store.UpdateProbeSysInfo(r.Context(), agentID, hb.SysInfo)
+	}
+	a.eng.OnHeartbeat(agentID, hb)
 	writeJSON(w, map[string]any{"ok": true})
 }
 

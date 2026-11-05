@@ -24,7 +24,8 @@ const (
 	KindSiteDown   = "site_down"      // P1 网站从外网不可达（外网组全部探针 HTTP 失败）
 	KindSiteConf   = "site_conflict"  // P2 外网探针数据冲突（部分探针报网站不可达）
 	KindCertExpire = "cert_expiring"  // P2 HTTPS 证书即将过期
-	KindMonitorDown = "monitor_down"  // P2 内网服务不可达（中心内置监控）
+	KindMonitorDown  = "monitor_down"  // P2 内网服务不可达（中心内置监控）
+	KindProbeRes     = "probe_resource" // P2 探针资源紧张（探针 VM 自身内存/磁盘 >90%）
 )
 
 var kindSeverity = map[string]string{
@@ -38,6 +39,7 @@ var kindSeverity = map[string]string{
 	KindSiteConf:   "P2",
 	KindCertExpire: "P2",
 	KindMonitorDown: "P2",
+	KindProbeRes:   "P2",
 }
 
 var kindTitle = map[string]string{
@@ -51,6 +53,7 @@ var kindTitle = map[string]string{
 	KindSiteConf:   "外网探针数据冲突（部分探针报网站不可达）",
 	KindCertExpire: "HTTPS 证书即将过期",
 	KindMonitorDown: "内网服务不可达",
+	KindProbeRes:   "探针资源紧张（内存/磁盘使用率超 90%）",
 }
 
 // AlertMeta 告警关联元信息（渲染邮件用）
@@ -106,6 +109,10 @@ type probeAgg struct {
 	speedLowStreak int
 	// 探针探测到的出口公网 IP（心跳上报，绑定线路时自动回填 lines.public_ip）
 	egressIP string
+	// 探针自健康与出口扩展信息（心跳上报）
+	ipISP, ipGeo, ipV6  string
+	cpuPct, memPct, diskPct, clockOffsetMs float64
+	resFailStreak int // 资源紧张（mem/disk >90%）连续心跳次数
 	// 分组（internal/external，evaluate 时从库刷新）
 	group string
 }
@@ -141,6 +148,13 @@ type ProbeStatus struct {
 	LastSeen   string  `json:"last_seen"`
 	Version    string  `json:"version"`
 	EgressIP   string  `json:"egress_ip,omitempty"` // 探测到的出口公网 IP
+	EgressISP  string  `json:"egress_isp,omitempty"`
+	EgressGeo  string  `json:"egress_geo,omitempty"`
+	EgressIPv6 string  `json:"egress_ipv6,omitempty"`
+	CPUPct     float64 `json:"cpu_pct,omitempty"`
+	MemPct     float64 `json:"mem_pct,omitempty"`
+	DiskPct    float64 `json:"disk_pct,omitempty"`
+	ClockOffsetMs float64 `json:"clock_offset_ms,omitempty"` // 探针时钟偏移（正=探针慢）
 	Recent     []bool  `json:"recent,omitempty"`    // 最近 30 次公网 ping 成败（心跳条）
 }
 
@@ -345,22 +359,39 @@ func (e *Engine) alertSettings(ctx context.Context) (AlertSettings, error) {
 }
 
 // OnHeartbeat 更新心跳；失联告警随之恢复。
-func (e *Engine) OnHeartbeat(agentID, version, publicIP string) {
+func (e *Engine) OnHeartbeat(agentID string, hb proto.Heartbeat) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	agg := e.aggFor(agentID)
 	agg.lastSeen = time.Now()
 	agg.everSeen = true
-	agg.version = version
+	agg.version = hb.Version
 	e.resolveLocked(KindBlind+":"+agentID, "心跳恢复")
 
-	// 出口公网 IP 自动探测：探针经心跳上报其线路出口 IP，绑定线路时回填
-	// lines.public_ip。与库对账纠偏（而非仅与引擎缓存比对）：手工改过或上次
-	// 更新失败时，下一轮心跳即纠正——保证"出口公网 IP 由探针自动探测"语义。
-	if publicIP == "" {
+	// 时钟偏移（探针时间戳 vs 服务器接收时刻；样本钳位机制另在 Ingest 兜底 >2min）
+	if hb.AgentTS > 0 {
+		agg.clockOffsetMs = float64(time.Now().UnixMilli() - hb.AgentTS)
+	}
+	agg.cpuPct, agg.memPct, agg.diskPct = hb.CPUPct, hb.MemPct, hb.DiskPct
+
+	// 出口信息对账回填：公网 IP / 运营商 / 归属地 均由探针自动探测，
+	// 与库值不一致（含手工改写）即纠正——"线路出口属性由探针自动探测"语义
+	needMeta := hb.PublicIP != "" || hb.IPISP != "" || hb.IPGeo != ""
+	if !needMeta {
 		return
 	}
-	agg.egressIP = publicIP
+	if hb.PublicIP != "" {
+		agg.egressIP = hb.PublicIP
+	}
+	if hb.IPISP != "" {
+		agg.ipISP = hb.IPISP
+	}
+	if hb.IPGeo != "" {
+		agg.ipGeo = hb.IPGeo
+	}
+	// IPv6 无"手工兜底"语义，空值=明确无 v6（本机无全局 v6 地址或探测失败），
+	// 无条件赋值——否则探针修复/降级后旧值会在引擎里永久残留（实测踩坑）
+	agg.ipV6 = hb.IPv6
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	m, err := e.getMeta(ctx)
@@ -368,12 +399,22 @@ func (e *Engine) OnHeartbeat(agentID, version, publicIP string) {
 		return
 	}
 	lm, ok := m[agentID]
-	if !ok || !lm.Bound || lm.PublicIP == publicIP {
+	if !ok || !lm.Bound {
 		return
 	}
-	if err := e.store.UpdateLinePublicIP(ctx, lm.LineID, publicIP); err == nil {
-		e.log.Printf("线路 %s 出口公网 IP 自动探测: %s → %s (探针 %s)",
-			lm.LineName, lm.PublicIP, publicIP, probeDisplay(agentID, lm))
+	if (hb.PublicIP != "" && lm.PublicIP != hb.PublicIP) ||
+		(hb.IPISP != "" && lm.ISP != hb.IPISP) ||
+		(hb.IPGeo != "" && lm.Geo != hb.IPGeo) {
+		if err := e.store.UpdateLineEgressInfo(ctx, lm.LineID, hb.PublicIP, hb.IPISP, hb.IPGeo); err == nil {
+			if hb.PublicIP != "" && lm.PublicIP != hb.PublicIP {
+				e.log.Printf("线路 %s 出口公网 IP 自动探测: %s → %s (探针 %s)",
+					lm.LineName, lm.PublicIP, hb.PublicIP, probeDisplay(agentID, lm))
+			}
+			if hb.IPISP != "" && lm.ISP != hb.IPISP {
+				e.log.Printf("线路 %s 运营商自动探测: %s → %s (归属地 %s)",
+					lm.LineName, lm.ISP, hb.IPISP, hb.IPGeo)
+			}
+		}
 	}
 }
 
@@ -555,6 +596,29 @@ func (e *Engine) evaluate() {
 				}, probeID, lm)
 			} else if !lineDownActive || pubOK45 {
 				e.resolveLocked(KindLineDown+":"+probeID, "公网连通恢复")
+			}
+		}
+
+		// P2 探针资源紧张：探针 VM 自身内存/磁盘 >90% 连续 3 次心跳（≈45s），
+		// 回落 <80% 恢复。探针磁盘满会砸掉本地缓存/上报，属预判性告警。
+		{
+			high := agg.memPct > 90 || agg.diskPct > 90
+			low := (agg.memPct == 0 || agg.memPct < 80) && (agg.diskPct == 0 || agg.diskPct < 80)
+			fp := KindProbeRes + ":" + probeID
+			if high && agg.everSeen {
+				agg.resFailStreak++
+			}
+			if high && agg.everSeen && agg.resFailStreak >= 3 {
+				e.fireLocked(fp, AlertMeta{
+					Kind: KindProbeRes, Severity: kindSeverity[KindProbeRes],
+					Title: kindTitle[KindProbeRes], ProbeID: probeID,
+					LineName: lm.LineName, Floor: lm.Floor, PublicIP: lm.PublicIP, CIDR: lm.CIDR,
+					StartsAt: now,
+					ExtraHTML: "内存 " + ftoa(agg.memPct) + "% / 磁盘 " + ftoa(agg.diskPct) + "%（连续 " + itoa(agg.resFailStreak) + " 次心跳 >90%）——请检查该探针 VM 资源",
+				}, probeID, lm)
+			} else if low && agg.resFailStreak > 0 {
+				agg.resFailStreak = 0
+				e.resolveLocked(fp, "资源使用率已回落")
 			}
 		}
 
@@ -868,7 +932,8 @@ func (e *Engine) Snapshot() map[string]ProbeStatus {
 		st := ProbeStatus{
 			LastSeen: agg.lastSeen.Format(time.RFC3339),
 			Version:  agg.version,
-			EgressIP: agg.egressIP,
+			EgressIP: agg.egressIP, EgressISP: agg.ipISP, EgressGeo: agg.ipGeo, EgressIPv6: agg.ipV6,
+			CPUPct: agg.cpuPct, MemPct: agg.memPct, DiskPct: agg.diskPct, ClockOffsetMs: agg.clockOffsetMs,
 		}
 		// 心跳条：最近 30 次公网 ping 成败（按时间正序）
 		n := len(agg.pingWin)

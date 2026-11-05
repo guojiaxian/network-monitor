@@ -176,18 +176,29 @@ func (a *Agent) doPing(ctx context.Context, target string, isGW bool, timeout ti
 func (a *Agent) heartbeatLoop(ctx context.Context) {
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
+	var cpuPrev [2]uint64 // 上次心跳的 CPU 累计节拍（idle, total），差分算使用率
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			mem, load := readMemLoad()
+			cpuPct, memPct, diskPct := readSelfHealth(&cpuPrev)
+			isp, geo, ipv6 := a.egressExtras()
 			hb := proto.Heartbeat{
 				Version:   a.opts.Version,
 				UptimeS:   uptimeS(),
 				MemUsedMB: mem,
 				Load1:     load,
 				PublicIP:  a.egressIPOf(),
+				IPISP:     isp,
+				IPGeo:     geo,
+				IPv6:      ipv6,
+				CPUPct:    cpuPct,
+				MemPct:    memPct,
+				DiskPct:   diskPct,
+				AgentTS:   time.Now().UnixMilli(),
+				SysInfo:   a.sysInfo,
 			}
 			if err := a.agentReq(ctx, "POST", "/api/agent/heartbeat", &hb, nil); err != nil {
 				if err == errReRegister {

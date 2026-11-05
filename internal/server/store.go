@@ -139,13 +139,21 @@ ALTER TABLE probes ADD COLUMN IF NOT EXISTS ssh_host TEXT NOT NULL DEFAULT '';
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS ssh_port INT NOT NULL DEFAULT 22;
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS ssh_user TEXT NOT NULL DEFAULT 'root';
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS ssh_pass_enc TEXT NOT NULL DEFAULT '';
-ALTER TABLE probes ADD COLUMN IF NOT EXISTS grp TEXT NOT NULL DEFAULT 'internal';`)
+ALTER TABLE probes ADD COLUMN IF NOT EXISTS grp TEXT NOT NULL DEFAULT 'internal';
+ALTER TABLE probes ADD COLUMN IF NOT EXISTS sysinfo JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS geo TEXT NOT NULL DEFAULT '';`)
 	return err
 }
 
-// UpdateLinePublicIP 线路出口公网 IP 自动回填（探针心跳探测）
-func (s *Store) UpdateLinePublicIP(ctx context.Context, lineID int, ip string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE lines SET public_ip=$2 WHERE id=$1`, lineID, ip)
+// UpdateLineEgressInfo 线路出口属性自动回填（探针心跳探测）：公网 IP/运营商/归属地。
+// 空值不覆盖（如探针尚未探得 IPv6 归属时不回退）。
+func (s *Store) UpdateLineEgressInfo(ctx context.Context, lineID int, ip, isp, geo string) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE lines SET
+  public_ip=CASE WHEN $2<>'' THEN $2 ELSE public_ip END,
+  isp=CASE WHEN $3<>'' THEN $3 ELSE isp END,
+  geo=CASE WHEN $4<>'' THEN $4 ELSE geo END
+WHERE id=$1`, lineID, ip, isp, geo)
 	return err
 }
 
@@ -617,14 +625,31 @@ func (s *Store) UpsertProbe(ctx context.Context, p *proto.RegisterReq, id, secre
 		display = p.Hostname
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO probes(id, secret, name, hostname, os, arch, version, source_ip, gateway, last_seen)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+INSERT INTO probes(id, secret, name, hostname, os, arch, version, source_ip, gateway, sysinfo, last_seen)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
 ON CONFLICT (id) DO UPDATE SET
   secret=EXCLUDED.secret, name=EXCLUDED.name, hostname=EXCLUDED.hostname, os=EXCLUDED.os,
   arch=EXCLUDED.arch, version=EXCLUDED.version, source_ip=EXCLUDED.source_ip,
-  gateway=EXCLUDED.gateway, last_seen=now()`,
-		id, secret, display, p.Hostname, p.OS, p.Arch, p.AgentVer, p.SourceIP, p.Gateway)
+  gateway=EXCLUDED.gateway, sysinfo=EXCLUDED.sysinfo, last_seen=now()`,
+		id, secret, display, p.Hostname, p.OS, p.Arch, p.AgentVer, p.SourceIP, p.Gateway, sysInfoJSON(p.SysInfo))
 	return err
+}
+
+// sysInfoJSON 资产信息转 JSONB（空 map 存 {}）
+func sysInfoJSON(si map[string]string) []byte {
+	if len(si) == 0 {
+		return []byte(`{}`)
+	}
+	b, err := json.Marshal(si)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return b
+}
+
+// UpdateProbeSysInfo 探针资产信息（心跳补报，覆盖式更新）
+func (s *Store) UpdateProbeSysInfo(ctx context.Context, probeID string, si map[string]string) {
+	_, _ = s.pool.Exec(ctx, `UPDATE probes SET sysinfo=$2 WHERE id=$1`, probeID, sysInfoJSON(si))
 }
 
 // probeSecrets 缓存探针凭证，避免每次上报查库
@@ -695,6 +720,7 @@ type ProbeRow struct {
 	SshPort        int        `json:"ssh_port"`
 	SshUser        string     `json:"ssh_user"`
 	SshConfigured  bool       `json:"ssh_configured"`
+	SysInfo        map[string]string `json:"sysinfo,omitempty"`
 	EnrolledAt     time.Time  `json:"enrolled_at"`
 	LastSeen       *time.Time `json:"last_seen"`
 }
@@ -703,7 +729,7 @@ func (s *Store) ListProbes(ctx context.Context) ([]ProbeRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT p.id, p.name, p.hostname, COALESCE(p.grp,'internal'), p.os, p.arch, p.version, p.source_ip, p.gateway,
        p.line_id, l.name, p.pending_version, p.ssh_host, p.ssh_port, p.ssh_user,
-       (p.ssh_host != '' AND p.ssh_pass_enc != ''), p.enrolled_at, p.last_seen
+       (p.ssh_host != '' AND p.ssh_pass_enc != ''), p.enrolled_at, p.last_seen, COALESCE(p.sysinfo,'{}'::jsonb)
 FROM probes p LEFT JOIN lines l ON p.line_id = l.id
 ORDER BY p.enrolled_at`)
 	if err != nil {
@@ -713,11 +739,13 @@ ORDER BY p.enrolled_at`)
 	out := []ProbeRow{}
 	for rows.Next() {
 		var r ProbeRow
+		var sysInfo []byte
 		if err := rows.Scan(&r.ID, &r.Name, &r.Hostname, &r.Group, &r.OS, &r.Arch, &r.Version, &r.SourceIP,
 			&r.Gateway, &r.LineID, &r.LineName, &r.PendingVersion,
-			&r.SshHost, &r.SshPort, &r.SshUser, &r.SshConfigured, &r.EnrolledAt, &r.LastSeen); err != nil {
+			&r.SshHost, &r.SshPort, &r.SshUser, &r.SshConfigured, &r.EnrolledAt, &r.LastSeen, &sysInfo); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(sysInfo, &r.SysInfo)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -793,6 +821,8 @@ type LineMeta struct {
 	LineName         string
 	Floor            string
 	PublicIP         string
+	ISP              string
+	Geo              string
 	CIDR             string
 	ContractDownMbps int
 	Bound            bool
@@ -804,7 +834,7 @@ type LineMeta struct {
 func (s *Store) ProbeLineMeta(ctx context.Context) (map[string]LineMeta, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT p.id, COALESCE(l.id,0), COALESCE(l.name,''), COALESCE(f.name,''),
-       COALESCE(l.public_ip,''), COALESCE(f.cidr,''), COALESCE(l.contract_down_mbps,0),
+       COALESCE(l.public_ip,''), COALESCE(l.isp,''), COALESCE(l.geo,''), COALESCE(f.cidr,''), COALESCE(l.contract_down_mbps,0),
        COALESCE(p.grp,'internal'), COALESCE(p.name,''), COALESCE(p.hostname,'')
 FROM probes p
 LEFT JOIN lines l ON p.line_id = l.id
@@ -817,7 +847,7 @@ LEFT JOIN floors f ON l.floor_id = f.id`)
 	for rows.Next() {
 		var id string
 		var lm LineMeta
-		if err := rows.Scan(&id, &lm.LineID, &lm.LineName, &lm.Floor, &lm.PublicIP, &lm.CIDR, &lm.ContractDownMbps, &lm.Group, &lm.ProbeName, &lm.ProbeHostname); err != nil {
+		if err := rows.Scan(&id, &lm.LineID, &lm.LineName, &lm.Floor, &lm.PublicIP, &lm.ISP, &lm.Geo, &lm.CIDR, &lm.ContractDownMbps, &lm.Group, &lm.ProbeName, &lm.ProbeHostname); err != nil {
 			return nil, err
 		}
 		if lm.Group == "" {
@@ -852,6 +882,7 @@ type LineRow struct {
 	Name             string `json:"name"`
 	ISP              string `json:"isp"`
 	PublicIP         string `json:"public_ip"`
+	Geo              string `json:"geo"`
 	ContractDownMbps int    `json:"contract_down_mbps"`
 	ContractUpMbps   int    `json:"contract_up_mbps"`
 	FloorID          *int   `json:"floor_id"`
@@ -907,7 +938,7 @@ func (s *Store) DeleteFloor(ctx context.Context, id int) error {
 
 func (s *Store) ListLines(ctx context.Context) ([]LineRow, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT l.id, l.name, l.isp, l.public_ip, l.contract_down_mbps, l.contract_up_mbps,
+SELECT l.id, l.name, l.isp, l.public_ip, COALESCE(l.geo,''), l.contract_down_mbps, l.contract_up_mbps,
        l.floor_id, COALESCE(f.name,''), COALESCE(f.cidr,'')
 FROM lines l LEFT JOIN floors f ON l.floor_id = f.id
 ORDER BY l.id`)
@@ -918,7 +949,7 @@ ORDER BY l.id`)
 	out := []LineRow{}
 	for rows.Next() {
 		var r LineRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.ISP, &r.PublicIP, &r.ContractDownMbps,
+		if err := rows.Scan(&r.ID, &r.Name, &r.ISP, &r.PublicIP, &r.Geo, &r.ContractDownMbps,
 			&r.ContractUpMbps, &r.FloorID, &r.FloorName, &r.CIDR); err != nil {
 			return nil, err
 		}
@@ -940,17 +971,22 @@ func (s *Store) UpsertLine(ctx context.Context, l *LineRow) (int, error) {
 		return 0, fmt.Errorf("线路名 %q 已存在", l.Name)
 	}
 	if l.ID != 0 {
+		// 自动探测字段（isp/public_ip/geo）空值=不覆盖：管理员改其他字段时
+		// 不会把探针自动回填的出口信息误清空
 		_, err := s.pool.Exec(ctx, `
-UPDATE lines SET name=$2, isp=$3, public_ip=$4, contract_down_mbps=$5,
-                 contract_up_mbps=$6, floor_id=$7 WHERE id=$1`,
-			l.ID, l.Name, l.ISP, l.PublicIP, l.ContractDownMbps, l.ContractUpMbps, l.FloorID)
+UPDATE lines SET name=$2,
+                 isp=CASE WHEN $3<>'' THEN $3 ELSE isp END,
+                 public_ip=CASE WHEN $4<>'' THEN $4 ELSE public_ip END,
+                 geo=CASE WHEN $8<>'' THEN $8 ELSE geo END,
+                 contract_down_mbps=$5, contract_up_mbps=$6, floor_id=$7 WHERE id=$1`,
+			l.ID, l.Name, l.ISP, l.PublicIP, l.ContractDownMbps, l.ContractUpMbps, l.FloorID, l.Geo)
 		return l.ID, err
 	}
 	var nid int
 	err := s.pool.QueryRow(ctx, `
-INSERT INTO lines(name, isp, public_ip, contract_down_mbps, contract_up_mbps, floor_id)
-VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
-		l.Name, l.ISP, l.PublicIP, l.ContractDownMbps, l.ContractUpMbps, l.FloorID).Scan(&nid)
+INSERT INTO lines(name, isp, public_ip, geo, contract_down_mbps, contract_up_mbps, floor_id)
+VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		l.Name, l.ISP, l.PublicIP, l.Geo, l.ContractDownMbps, l.ContractUpMbps, l.FloorID).Scan(&nid)
 	return nid, err
 }
 

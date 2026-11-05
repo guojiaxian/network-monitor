@@ -57,7 +57,7 @@
             <option v-for="f in floors" :key="f.id" :value="f.id">{{ f.name }}</option>
           </select>
         </div>
-        <div class="col-md-2"><label class="form-label small mb-1">ISP</label><input v-model="nl.isp" class="form-control form-control-sm" placeholder="联通" /></div>
+        <div class="col-md-2"><label class="form-label small mb-1">ISP</label><input v-model="nl.isp" class="form-control form-control-sm" placeholder="留空=探针自动探测" /></div>
         <div class="col-md-2 text-end">
           <button class="btn btn-sm btn-primary" @click="saveLine">{{ nl.id ? '保存修改' : '新增线路' }}</button>
           <button v-if="nl.id" class="btn btn-sm btn-link" @click="resetLine">取消</button>

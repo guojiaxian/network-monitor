@@ -118,6 +118,7 @@ func (a *Agent) register(ctx context.Context) error {
 		AgentVer:    a.opts.Version,
 		SourceIP:    detectSourceIP(),
 		Gateway:     detectGateway(),
+		SysInfo:     collectSysInfo(a.stateDir),
 	}
 	var resp proto.RegisterResp
 	if err := a.agentReq(ctx, http.MethodPost, "/api/agent/register", &req, &resp); err != nil {

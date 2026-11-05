@@ -36,6 +36,14 @@ type Heartbeat struct {
 	MemUsedMB float64 `json:"mem_used_mb"`
 	Load1     float64 `json:"load1"`
 	PublicIP  string  `json:"public_ip,omitempty"` // 探测到的出口公网 IP（绑定线路时自动回填 lines.public_ip）
+	IPISP     string  `json:"ip_isp,omitempty"`    // 出口 IP 归属运营商（自动回填 lines.isp）
+	IPGeo     string  `json:"ip_geo,omitempty"`    // 出口 IP 归属地（自动回填 lines.geo）
+	IPv6      string  `json:"ipv6,omitempty"`      // 出口 IPv6 地址（无双栈为空）
+	CPUPct    float64 `json:"cpu_pct,omitempty"`   // 探针自健康：CPU 使用率 %
+	MemPct    float64 `json:"mem_pct,omitempty"`   // 内存使用率 %
+	DiskPct   float64 `json:"disk_pct,omitempty"`  // 身份目录所在分区使用率 %
+	AgentTS   int64   `json:"agent_ts,omitempty"`  // 探针发送时刻 UnixMilli（服务器算时钟偏移）
+	SysInfo   map[string]string `json:"sysinfo,omitempty"` // 资产信息（每周期首采，心跳补报——不重注册也能刷新）
 }
 
 // ProbeConfig 中心端下发的探测配置（版本号递增生效）
@@ -82,6 +90,7 @@ type RegisterReq struct {
 	AgentVer    string `json:"agent_version"`
 	SourceIP    string `json:"source_ip"`
 	Gateway     string `json:"gateway"`
+	SysInfo     map[string]string `json:"sysinfo,omitempty"` // 资产信息（CPU/内存/磁盘/内核/虚拟化/MAC，注册时一次采集）
 }
 
 // RegisterResp 注册应答（携带身份凭证与初始配置）

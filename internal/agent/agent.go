@@ -40,6 +40,10 @@ type Agent struct {
 
 	ipMu     sync.Mutex
 	egressIP string // 探测到的出口公网 IP（随心跳上报，中心回填线路）
+	ipISP    string // 出口 IP 归属运营商（ipip 解析）
+	ipGeo    string // 出口 IP 归属地（"中国 河南 郑州"）
+	ipV6     string // 出口 IPv6（无则空）
+	sysInfo  map[string]string // 资产信息（周期开始采集一次，随心跳上报）
 
 	cfgMu    sync.RWMutex
 	cfg      proto.ProbeConfig
@@ -121,6 +125,7 @@ func (a *Agent) cycle(ctx context.Context) error {
 		return err // 凭证失效会包装为 errReRegister
 	}
 
+	a.sysInfo = collectSysInfo(a.stateDir) // 资产随周期采集：重启/升级后自动刷新，无需重注册
 	rep := newReporter(a)
 	go rep.run(cctx)
 
