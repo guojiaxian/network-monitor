@@ -187,6 +187,7 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 				UptimeS:   uptimeS(),
 				MemUsedMB: mem,
 				Load1:     load,
+				PublicIP:  a.egressIPOf(),
 			}
 			if err := a.agentReq(ctx, "POST", "/api/agent/heartbeat", &hb, nil); err != nil {
 				if err == errReRegister {

@@ -97,9 +97,10 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 6. 数据模型与指标速查
 
-**PG 表**：floors / lines / probes（含 name、grp、ssh_*、pending_version）/ alerts / silences / reports / audit / agent_releases / users / settings。
+**PG 表**：floors / lines（public_ip 由探针自动探测回填：探针每 5min 访问 IP 回显服务、随心跳上报、中心对账纠偏，手工值仅作探测全挂时兜底）/ probes（含 name、grp、ssh_*、pending_version）/ alerts / silences / reports / audit / agent_releases / users / settings。
 **settings 键**：agent_config（内网组探测配置）、agent_config_external（外网组）、internal_monitors（内→内内置监控）、smtp、alert_settings、speed_settings、report_settings、notify_channels、snmp_settings、agent.enroll_token。
 **VM 指标**：nw_ping_{rtt_ms,ok,loss_pct}{class=gw|public}、nw_tcp_*、nw_dns_*、nw_http_{ttfb_ms,ok,code,cert_days}、nw_speed_{down,up}_mbps、nw_snmp_{in,out}_bps{line}、nw_monitor_{ok,rtt_ms}{monitor,type}（内→内）。标签：probe/line/target/monitor。
+**协议新增（2026-11-06）**：Heartbeat.PublicIP（出口公网 IP）、ProbeConfig.IPEchoURLs（回显服务池，空=探针内置默认 ip.3322.net/members.3322.org/v4.ident.me/myip.ipip.net）——只增字段，新旧兼容。
 **探针名称**：RegisterReq.Name（install-agent.sh 第 4 参数/-name 传入），注册时落 probes.name；告警邮件/探针列表/未绑定区均显示名称。**注意**：外网组探针不计入 unbound 警告（overviewData 已过滤）。
 
 ## 7. 踩坑记录（新 agent 必读，避免重复排查）

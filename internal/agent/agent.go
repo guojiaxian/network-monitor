@@ -38,6 +38,9 @@ type Agent struct {
 	identMu sync.RWMutex
 	ident   Identity
 
+	ipMu     sync.Mutex
+	egressIP string // 探测到的出口公网 IP（随心跳上报，中心回填线路）
+
 	cfgMu    sync.RWMutex
 	cfg      proto.ProbeConfig
 	reloadCh chan struct{}
@@ -125,6 +128,7 @@ func (a *Agent) cycle(ctx context.Context) error {
 	go a.speedLoop(cctx)
 	go a.heartbeatLoop(cctx)
 	go a.configWatch(cctx)
+	go a.publicIPLoop(cctx)
 
 	select {
 	case <-cctx.Done():

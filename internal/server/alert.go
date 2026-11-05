@@ -104,6 +104,8 @@ type probeAgg struct {
 	lastSpeed  *proto.Sample
 	// 带宽不达标连续次数
 	speedLowStreak int
+	// 探针探测到的出口公网 IP（心跳上报，绑定线路时自动回填 lines.public_ip）
+	egressIP string
 	// 分组（internal/external，evaluate 时从库刷新）
 	group string
 }
@@ -138,7 +140,8 @@ type ProbeStatus struct {
 	SpeedAt    string  `json:"speed_at,omitempty"`
 	LastSeen   string  `json:"last_seen"`
 	Version    string  `json:"version"`
-	Recent     []bool  `json:"recent,omitempty"` // 最近 30 次公网 ping 成败（心跳条）
+	EgressIP   string  `json:"egress_ip,omitempty"` // 探测到的出口公网 IP
+	Recent     []bool  `json:"recent,omitempty"`    // 最近 30 次公网 ping 成败（心跳条）
 }
 
 // Engine 告警引擎：消费探测样本与心跳，按规则判定并触发邮件。
@@ -342,7 +345,7 @@ func (e *Engine) alertSettings(ctx context.Context) (AlertSettings, error) {
 }
 
 // OnHeartbeat 更新心跳；失联告警随之恢复。
-func (e *Engine) OnHeartbeat(agentID, version string) {
+func (e *Engine) OnHeartbeat(agentID, version, publicIP string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	agg := e.aggFor(agentID)
@@ -350,6 +353,28 @@ func (e *Engine) OnHeartbeat(agentID, version string) {
 	agg.everSeen = true
 	agg.version = version
 	e.resolveLocked(KindBlind+":"+agentID, "心跳恢复")
+
+	// 出口公网 IP 自动探测：探针经心跳上报其线路出口 IP，绑定线路时回填
+	// lines.public_ip。与库对账纠偏（而非仅与引擎缓存比对）：手工改过或上次
+	// 更新失败时，下一轮心跳即纠正——保证"出口公网 IP 由探针自动探测"语义。
+	if publicIP == "" {
+		return
+	}
+	agg.egressIP = publicIP
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	m, err := e.getMeta(ctx)
+	if err != nil {
+		return
+	}
+	lm, ok := m[agentID]
+	if !ok || !lm.Bound || lm.PublicIP == publicIP {
+		return
+	}
+	if err := e.store.UpdateLinePublicIP(ctx, lm.LineID, publicIP); err == nil {
+		e.log.Printf("线路 %s 出口公网 IP 自动探测: %s → %s (探针 %s)",
+			lm.LineName, lm.PublicIP, publicIP, probeDisplay(agentID, lm))
+	}
 }
 
 func (e *Engine) aggFor(id string) *probeAgg {
@@ -843,6 +868,7 @@ func (e *Engine) Snapshot() map[string]ProbeStatus {
 		st := ProbeStatus{
 			LastSeen: agg.lastSeen.Format(time.RFC3339),
 			Version:  agg.version,
+			EgressIP: agg.egressIP,
 		}
 		// 心跳条：最近 30 次公网 ping 成败（按时间正序）
 		n := len(agg.pingWin)

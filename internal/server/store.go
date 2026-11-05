@@ -143,6 +143,12 @@ ALTER TABLE probes ADD COLUMN IF NOT EXISTS grp TEXT NOT NULL DEFAULT 'internal'
 	return err
 }
 
+// UpdateLinePublicIP 线路出口公网 IP 自动回填（探针心跳探测）
+func (s *Store) UpdateLinePublicIP(ctx context.Context, lineID int, ip string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE lines SET public_ip=$2 WHERE id=$1`, lineID, ip)
+	return err
+}
+
 // ---------- 设置 ----------
 
 func DefaultProbeConfig() proto.ProbeConfig {
@@ -159,6 +165,7 @@ func DefaultProbeConfig() proto.ProbeConfig {
 		DNSDomain:     "www.baidu.com",
 		HTTPTargets:   []string{"http://www.qq.com/generate_204", "https://www.baidu.com"},
 		SourceIP:      "auto",
+		IPEchoURLs:    []string{"http://ip.3322.net", "http://members.3322.org/dyndns/getip", "https://v4.ident.me", "https://myip.ipip.net"},
 	}
 }
 
@@ -175,6 +182,7 @@ func DefaultExternalProbeConfig() proto.ProbeConfig {
 		DNSDomain:     "",
 		SourceIP:      "auto",
 		SkipGateway:   true,
+		IPEchoURLs:    []string{"http://ip.3322.net", "http://members.3322.org/dyndns/getip", "https://v4.ident.me", "https://myip.ipip.net"},
 	}
 }
 

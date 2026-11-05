@@ -35,6 +35,7 @@ type Heartbeat struct {
 	UptimeS   float64 `json:"uptime_s"`
 	MemUsedMB float64 `json:"mem_used_mb"`
 	Load1     float64 `json:"load1"`
+	PublicIP  string  `json:"public_ip,omitempty"` // 探测到的出口公网 IP（绑定线路时自动回填 lines.public_ip）
 }
 
 // ProbeConfig 中心端下发的探测配置（版本号递增生效）
@@ -52,6 +53,7 @@ type ProbeConfig struct {
 	HTTPTargets   []string `json:"http_targets"` // URL
 	SourceIP      string   `json:"source_ip"`    // auto = 自动探测出口源 IP
 	SkipGateway   bool     `json:"skip_gateway"` // 外网组探针：跳过网关探测（无内网故障域概念）
+	IPEchoURLs    []string `json:"ip_echo_urls"` // 出口公网 IP 回显服务地址池（空=用探针内置默认）
 	SpeedTask     *SpeedTask `json:"speed_task,omitempty"` // 测速任务（中心端串行调度，非空表示该探针需在 RunAt 执行一次）
 	Upgrade       *UpgradeTask `json:"upgrade,omitempty"`  // 升级任务（非空表示需升级到指定版本）
 }
