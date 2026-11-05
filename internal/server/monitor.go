@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"sync"
@@ -64,16 +65,17 @@ func (m *MonitorRunner) Start(ctx context.Context) {
 	go m.reloadLoop(ctx)
 }
 
-// reloadLoop 每 30s 重读设置，代次变化时重启全部目标循环（启动时立即加载一次），
+// reloadLoop 每 30s 重读设置，配置真正变化时才换代重启全部目标循环（启动时立即加载），
 // 并清理已删除目标的运行状态与进行中告警。
+// 注意：不能无条件换代——旧实现每 30s cancel 一次，在途探测的时序写入全部被
+// context canceled 打断（nw_monitor_* 永远写不进 VM），失败计数节奏也被打乱。
 func (m *MonitorRunner) reloadLoop(ctx context.Context) {
 	var cancel context.CancelFunc
+	var lastFP string
 	run := func() {
 		st := m.settings(ctx)
+		// 清理已删除目标的遗留状态与告警（每次都执行，代价极小）
 		m.mu.Lock()
-		m.version++
-		v := m.version
-		// 清理已删除目标的遗留状态与告警
 		live := map[string]bool{}
 		for _, it := range st.Items {
 			live[it.Name] = true
@@ -93,13 +95,23 @@ func (m *MonitorRunner) reloadLoop(ctx context.Context) {
 				cancel()
 				cancel = nil
 			}
+			lastFP = ""
 			return
 		}
+		b, _ := json.Marshal(st)
+		if string(b) == lastFP && cancel != nil {
+			return // 配置未变化：保持现有循环，不打断在途探测/写入
+		}
+		lastFP = string(b)
 		if cancel != nil {
 			cancel()
 		}
 		var cctx context.Context
 		cctx, cancel = context.WithCancel(ctx)
+		m.mu.Lock()
+		m.version++
+		v := m.version
+		m.mu.Unlock()
 		go m.runAll(cctx, st, v)
 	}
 	run()
@@ -141,6 +153,14 @@ func (m *MonitorRunner) runOne(ctx context.Context, it MonitorItem, version int)
 	t := time.NewTicker(time.Duration(it.IntervalS) * time.Second)
 	defer t.Stop()
 	timeout := 5 * time.Second
+	// 立即执行首次探测：否则首个状态要等一个完整间隔（30s）才出现，
+	// 总览页配置后近一分钟无数据显示
+	m.mu.Lock()
+	cur := m.version
+	m.mu.Unlock()
+	if cur == version {
+		m.probe(ctx, it, timeout)
+	}
 	for {
 		select {
 		case <-ctx.Done():

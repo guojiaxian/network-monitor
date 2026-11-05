@@ -389,7 +389,10 @@ func (agg *probeAgg) lossStats(now time.Time, win time.Duration) (anyOK45 bool, 
 			ratios = append(ratios, float64(p[1])*100/float64(p[0]))
 		}
 	}
-	if len(ratios) == 0 {
+	// 门槛必须对所有目标同时成立：只统计到部分目标时中位数会退化为单个目标的
+	// 丢包率——探针刚启动/重启后各目标样本数因抖动不同步，曾把"唯一凑满样本的
+	// 坏目标"（如个别被墙 DNS）误判为整条线路降质。
+	if len(ratios) == 0 || len(ratios) != len(perTarget) {
 		return anyOK45, 0, false
 	}
 	sort.Float64s(ratios)
@@ -530,13 +533,25 @@ func (e *Engine) evaluate() {
 			}
 		}
 
+		// 契约带宽移除后，未达标的测速告警自然收口（否则已触发的 speed_low
+		// 永远无法解除——Ingest 中的恢复判定被 ContractDownMbps>0 门禁挡住）
+		if lm.Bound && lm.ContractDownMbps == 0 {
+			e.resolveLocked(KindSpeedLow+":"+probeID, "带宽契约已移除")
+		}
+
 		// P2 线路降质：窗口内各目标丢包率下中位数超阈值（线路中断时不叠加）
 		winMin := time.Duration(als.LossWindowMin) * time.Minute
 		_, medianLoss, enough := agg.lossStats(now, winMin)
 		if enough {
 			fp := KindDegraded + ":" + probeID
 			active := e.live[fp] != nil
-			if !active && medianLoss > als.LossPctThresh {
+			outage := e.outageActiveLocked(lm, probeID)
+			if outage {
+				// P1 中断（线路/楼层）已确认：降质并入中断事件，避免同一故障双重告警
+				if active {
+					e.resolveLocked(fp, "线路已确认中断，降质并入中断事件")
+				}
+			} else if !active && medianLoss > als.LossPctThresh {
 				e.fireLocked(fp, AlertMeta{
 					Kind: KindDegraded, Severity: kindSeverity[KindDegraded],
 					Title: kindTitle[KindDegraded], ProbeID: probeID,
@@ -613,6 +628,20 @@ func (e *Engine) evaluate() {
 			e.resolveLocked(fpC, "探针意见一致")
 		}
 	}
+}
+
+// outageActiveLocked 该探针关联线路当前是否已确认 P1 中断（线路级中断 / 楼层网关中断 /
+// 未绑定线路的按探针中断）。需在 e.mu 锁内调用。降质告警在确认中断后不再叠加。
+func (e *Engine) outageActiveLocked(lm LineMeta, probeID string) bool {
+	if lm.Bound {
+		return e.live[KindLineDown+":line"+itoa(lm.LineID)] != nil ||
+			e.live[KindFloorDown+":"+probeID] != nil
+	}
+	if lm.Group == "external" {
+		return false // 外网组无线路/楼层概念
+	}
+	return e.live[KindLineDown+":"+probeID] != nil ||
+		e.live[KindFloorDown+":"+probeID] != nil
 }
 
 // lineVote 一条线路在单个评估周期内的有效证人投票

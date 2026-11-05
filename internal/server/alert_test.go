@@ -89,6 +89,37 @@ func TestLossStatsWindowPrune(t *testing.T) {
 	}
 }
 
+// 样本量门槛必须对所有目标同时成立（真实踩坑回归）：
+// 探针刚启动时各目标样本数因抖动不同步，坏目标先凑满 10 个样本而好目标还差 1 个，
+// 中位数退化为坏目标自身的 100% → 误报降质。修复后门槛不一致时应判"样本不足"。
+func TestLossStatsAsymmetricSampleCounts(t *testing.T) {
+	agg := &probeAgg{}
+	now := time.Now()
+	// 坏目标 a 已有 12 个全失败样本；好目标 b/c 各只有 9 个成功样本
+	for i := 0; i < 12; i++ {
+		ts := now.Add(-time.Duration(12-i) * time.Second)
+		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts})
+	}
+	for i := 0; i < 9; i++ {
+		ts := now.Add(-time.Duration(9-i) * time.Second)
+		agg.pingWin = append(agg.pingWin, pingRec{"b", true, ts}, pingRec{"c", true, ts})
+	}
+	_, med, enough := agg.lossStats(now, 5*time.Minute)
+	if enough {
+		t.Fatalf("各目标样本量不一致时不应参与统计（误报中位数 %v）", med)
+	}
+	// 好目标补足到 10 个后：[0,0,100] 中位数 0，单坏目标不误报
+	ts := now
+	agg.pingWin = append(agg.pingWin, pingRec{"b", true, ts}, pingRec{"c", true, ts})
+	_, med, enough = agg.lossStats(now, 5*time.Minute)
+	if !enough {
+		t.Fatal("全部目标样本量足够后应参与统计")
+	}
+	if med != 0 {
+		t.Fatalf("单个坏目标不应抬高中位数，got %v", med)
+	}
+}
+
 func TestReportCSV(t *testing.T) {
 	v := func(f float64) *float64 { return &f }
 	d := &reportData{Kind: "day", Start: "2026-10-25 00:00", End: "2026-10-26 00:00",

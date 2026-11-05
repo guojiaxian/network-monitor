@@ -60,14 +60,17 @@ func New(opts Options) (*Agent, error) {
 	if err := os.MkdirAll(opts.StateDir, 0o755); err != nil {
 		return nil, err
 	}
-	return &Agent{
+	a := &Agent{
 		opts:     opts,
 		log:      log.New(os.Stderr, "agent ", log.LstdFlags|log.Lmsgprefix),
 		stateDir: opts.StateDir,
 		httpc:    &http.Client{Timeout: 15 * time.Second},
 		reloadCh: make(chan struct{}, 1),
 		sampleCh: make(chan proto.Sample, 4096),
-	}, nil
+	}
+	a.loadIdentity() // 复用持久化身份：否则每次重启都会重新注册新 ID（真实踩坑：
+	                 // 重启即换 ID，旧行变盲区告警+孤儿行，绑定/名称/SSH 凭据全部丢失）
+	return a, nil
 }
 
 func (a *Agent) cachePath() string { return filepath.Join(a.stateDir, "cache.jsonl") }
