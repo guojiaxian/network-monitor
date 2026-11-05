@@ -9,9 +9,11 @@
 
 为单位（12 条联通宽带 × 12 个楼层子网，防火墙按源网段策略路由）自研的出口网络监控系统 **NetWatch**：楼层探针监测每条线路连通性/网速 + 阿里云外网探针监测官网可达性 + 告警（邮件/钉钉/企微）+ Web 管理后台 + 大屏。Go 单模块（agent + server）+ Vue3 前端 + PostgreSQL + VictoriaMetrics。
 
-## 1. 当前状态（截至 2026-10-26）
+## 1. 当前状态（截至 2026-11-05）
 
 **开发全部完成**，等待现场实施。里程碑：M0 骨架 / M1 连通性+后台 / M2 测速+大屏 / M3 报表权限审计自更新 / M4 文档+演练预演 —— 全部 ✅。
+
+**2026-11-05 正式中心端已上电**：全新专用麒麟 V10 服务器（10.8.14.200）原生部署完成（无 Docker，PG/VM 均本机 systemd），server 监听 **0.0.0.0:80**，开机自启，端到端验证通过。**setup 向导未跑**（initialized:false，等用户自建管理员），**探针 0 台**（用户后续自行配置探针服务器）。本次部署未 git push。
 额外完成的二期功能：IM 告警通道（钉钉/企微）、双探针交叉验证、压测回放（cmd/loadgen）、SNMP 真实流量采集、探针零接触运维（SSH 凭据后台管理+网页终端）、外网组官网探测（含证书检测）、内→内内置监控（中心自探，Uptime Kuma 模式）、探测历史逐条查询（PRTG 风格，/history 页）。
 
 **剩余全部是现场实施事项**（无代码待办）：
@@ -64,7 +66,7 @@ dist/             make dist 交付包（netwatch-0.2.tar.gz + sha256）
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin GOPROXY=https://goproxy.cn,direct   # Go 1.23.12 装在 /usr/local/go
-cd /root/applications/network-monitor   # 必须先 cd，shell 的 cwd 会漂移（沙箱特性，见 §7）；2026-11-02 项目由 /root/network-monitor 迁移至此
+cd <仓库根>            # 必须先 cd，shell 的 cwd 会漂移（沙箱特性，见 §7）。正式机=/root/network-monitor（git clone）；旧沙箱演示机曾用 /root/applications/network-monitor
 make build        # agent+server+web（web 用 npmmirror）
 make test         # go test ./...
 make dist         # 交付包 dist/netwatch-0.2.tar.gz
@@ -74,14 +76,20 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 **重要流程约定：改了 server 代码后必须重启演示环境的 server 进程才生效**（改了 n 次忘记重启导致"改了没效果"的误判，见 §7 坑 1）。
 
-## 5. 演示/测试环境（当前运行态）
+## 5. 运行环境（当前运行态）
 
-- **项目路径**：2026-11-02 项目由 /root/network-monitor 整体迁移至 **/root/applications/network-monitor**（PG/VM 数据无变化）。迁移当日的坑：server 以旧绝对路径 env（NW_WEB_DIR/NW_DATA_DIR）重启过一次导致前端 404；两个探针 state 身份丢失按新 ID 重注册（旧孤儿行已删）；agent1 systemd unit 的 -server 端口未跟随 28765→18003 改动。均已修复。
-- **中心端**：0.0.0.0:18003（局域网经 http://10.8.11.4:18003 访问；2026-10-31 由 28765 改 18003），env：`NW_DB=postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable`、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=test-token`、`NW_WEB_DIR=/root/applications/network-monitor/web/dist`、`NW_DATA_DIR=/root/applications/network-monitor/data`。以后台任务方式启动（输出重定向 /tmp/nw-server.log）。
-- **依赖容器**（docker）：`nwtest-pg`（PG16，宿主 5433）、`nwtest-vm`（VictoriaMetrics v1.102.1，宿主 8428）。
-- **探针**：agent1 = systemd 服务 netwatch-agent（/usr/local/bin/netwatch-agent，state /var/lib/netwatch-agent，id e578107e47e11d94），改名"1楼-东配线间"、绑"联通1号线"（internal 组）；agent2 = **uid 1234** 进程（`setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw`，state /tmp/nw-agent2 **属主必须 1234**，id 600758069d6a6ea6），现为**外网组**（external，名字"外网探针"），探测 baidu HTTPS。**探针身份丢失会自动重注册新 ID**，改名/绑线/分组需在后台重做，DB 孤儿行手动删。
-- **账号**：admin/netwatch123（管理员）、viewer1/viewer12345（观察者，2026-11-02 迁移检查时重建）。**会话存内存，server 重启后需重新登录**（`curl -c` 存 /tmp/nw-ck 或读 /tmp/nw-tok）。
-- **测试辅助**：/tmp/sshmockd 2222 端口（root/Op@2026!x，已含 PTY 假shell）；SNMP 模拟器 /tmp/mock_snmp.py（udp 1161，community public，注入 300/30Mbps）；IM webhook 模拟器 /tmp/mock_webhook.py（http 18099，notify_channels 指向它）；三者可能已被停掉，重启命令见本文件 §8。
+### 5a. 正式中心端（2026-11-05 部署，本机）
+
+- **机器**：全新专用服务器，麒麟 V10 (Halberd) x86_64，2C/2.8G/17G（内存偏紧，VM 缓存已限 20%），IP **10.8.14.200**，SELinux Disabled，firewalld 已放行 80/tcp。**无 Docker**。
+- **项目路径**：`/root/network-monitor`（git clone，main 分支）；**部署根**：`/opt/netwatch`（bin/ web/ vmdata/ data/，属主 netwatch 系统用户）。
+- **服务（全部 systemd enabled 开机自启）**：`postgresql`（yum PG **10.5**，/var/lib/pgsql/data，hba 127.0.0.1 改 md5）· `victoriametrics`（v1.102.1 单二进制，`-memory.allowedPercent=20 -retentionPeriod=90d`，:8428）· `netwatch-server`（**0.0.0.0:80**，非 root 绑 80 靠单元内 `AmbientCapabilities=CAP_NET_BIND_SERVICE`）。
+- **env（在 /etc/systemd/system/netwatch-server.service）**：`NW_LISTEN=:80`、`NW_DB=postgres://netwatch:<随机口令>@127.0.0.1:5432/netwatch?sslmode=disable`（口令在 `/opt/netwatch/.pg-pass` 0600）、`NW_VM_URL=http://127.0.0.1:8428`、`NW_ENROLL_TOKEN=<随机>`（`/opt/netwatch/.enroll-token` 0600）、`NW_WEB_DIR=/opt/netwatch/web/dist`、`NW_DATA_DIR=/opt/netwatch/data`。
+- **本机工具链**：Go 1.26.10（/usr/local/go，go.mod 实际要求 1.26 而非旧记的 1.23）、Node 20.18.1（/usr/local/lib/nodejs，软链 /usr/local/bin）。国内源：GOPROXY=goproxy.cn、npm=npmmirror、Go/Node 包=mirrors.aliyun.com、GitHub 走 `https://ghfast.top/` 前缀（直连不通）。
+- **待办（用户侧）**：setup 向导未跑（`/api/admin/setup` 返回 initialized:false，管理员未建）；探针 0 台待用户配置；真实 SMTP/IM/SNMP 未配。本次部署**未 git push**。
+
+### 5b. 旧沙箱演示环境（另一台机器，仅存档参考）
+
+- 曾用路径 /root/applications/network-monitor（2026-11-02 由 /root/network-monitor 迁移），端口 18003，依赖 docker 容器 nwtest-pg(PG16)/nwtest-vm(VM 1.102.1)，探针 agent1(systemd)/agent2(uid 1234)，账号 admin/[测试口令]。以下踩坑经验仍适用本机：探针身份丢失自动重注册、会话存内存重启即失效、/tmp 属主与孤儿行清理等。
 
 ## 6. 数据模型与指标速查
 
@@ -92,8 +100,8 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 7. 踩坑记录（新 agent 必读，避免重复排查）
 
-1. **改 server 代码后忘记重启进程**→表现为"新功能 404/行为不变"。先 `ss -tlnp | grep 18003` 确认进程启动时间。
-2. **Bash 工具的 shell cwd 会漂移**：相对路径 `./bin/...` 偶发 "command not found"（exit 127）。**永远先 `cd /root/applications/network-monitor`**。
+1. **改 server 代码后忘记重启进程**→表现为"新功能 404/行为不变"。正式机用 `systemctl status netwatch-server` 看启动时间（改代码后需 `make build && install -m 0755 bin/netwatch-server /opt/netwatch/bin/ && systemctl restart netwatch-server`）。
+2. **Bash 工具的 shell cwd 会漂移**：相对路径 `./bin/...` 偶发 "command not found"（exit 127）。**永远先 `cd` 仓库根（正式机 /root/network-monitor）或用绝对路径**。
 3. **pkill -f 匹配会把执行 shell 自己也杀掉**（命令行含相同字符串）；用 `ps -eo user,pid,cmd | grep 'netwatch-agen[t]'` 后按 PID kill。
 4. **gosnmp**：返回的 OID 带**前导点**（`.1.3.6...`），OctetString 是 `[]byte` 不是 string，Counter64 值就是 uint64（gosnmp.Counter64 是常量不是类型）。
 5. **VM 即时查询**（/api/v1/query）有 ~30s latencyOffset，刚写入的数据查不到属正常；export/range_query 不受影响。**回填数据后立即生成报表可能查不到**（索引未刷新），稍等再生成即可。
@@ -111,17 +119,26 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 ## 8. 常用操作配方
 
 ```bash
+# ===== 正式中心端（本机 10.8.14.200，全部 systemd 管理，勿用手动后台进程）=====
+systemctl restart netwatch-server victoriametrics   # 重启服务；日志 journalctl -u netwatch-server -f
+# 改代码发布流程：cd /root/network-monitor && make build（web 改动需 cd web && npm run build）
+#   → cp -r web/dist /opt/netwatch/web/ && install -m 0755 bin/netwatch-server /opt/netwatch/bin/ && systemctl restart netwatch-server
+# 数据库口令 / 注册令牌：cat /opt/netwatch/.pg-pass  /opt/netwatch/.enroll-token（均 0600）
+# 备份：PG 用 pg_dump（su - postgres -c 'pg_dump netwatch'）；data/ssh-master.key 必须单独备份（见坑 7）
+# 探针安装（后续）：用 deploy/install-agent.sh，指向 http://10.8.14.200（80 端口）+ .enroll-token 值
+
+# ===== 以下为旧沙箱演示机（另一台机器）配方，仅存档 =====
 # 重启中心端（演示）—— 先 ps 精确 kill 旧 PID（勿用 pkill -f，见坑 3）
 cd /root/applications/network-monitor && NW_LISTEN=0.0.0.0:18003 NW_DB='postgres://netwatch:netwatch@127.0.0.1:5433/netwatch?sslmode=disable' NW_VM_URL='http://127.0.0.1:8428' NW_ENROLL_TOKEN=test-token NW_WEB_DIR=/root/applications/network-monitor/web/dist NW_DATA_DIR=/root/applications/network-monitor/data ./bin/netwatch-server > /tmp/nw-server.log 2>&1 &
 # 重启 agent2（外网组，uid 1234）
 cd /root/applications/network-monitor && NW_SERVER=http://127.0.0.1:18003 NW_ENROLL_TOKEN=test-token NW_STATE_DIR=/tmp/nw-agent2 setpriv --reuid 1234 --regid 1234 --clear-groups --inh-caps=+net_raw --ambient-caps=+net_raw ./bin/netwatch-agent > /tmp/nw-agent2.log 2>&1 &
 # agent1 由 systemd 管理：改端口/参数需 sed /etc/systemd/system/netwatch-agent.service 后 daemon-reload + restart
 # 登录取会话（Cookie 存 /tmp/nw-ck，后续请求 -b /tmp/nw-ck；会话鉴权用 Cookie nw_session，非自定义头）
-curl -s -c /tmp/nw-ck -X POST http://127.0.0.1:18003/api/admin/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"netwatch123"}'
+curl -s -c /tmp/nw-ck -X POST http://127.0.0.1:18003/api/admin/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"[测试口令]"}'
 # 压测回填 / SNMP mock / SSH mock / IM webhook mock
 cd /root/applications/network-monitor && ./bin/loadgen -server http://127.0.0.1:18003 -token test-token -probes 12 -backfill 7
 python3 /tmp/mock_snmp.py &            # udp 1161
-/tmp/sshmockd 2222 root 'Op@2026!x' &
+/tmp/sshmockd 2222 root 'test-pass' &
 python3 /tmp/mock_webhook.py &         # http 18099（notify_channels 的钉钉/企微测试目标）
 ```
 
