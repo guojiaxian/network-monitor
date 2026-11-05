@@ -86,3 +86,17 @@ body {
 .nw-tabs .nav-link.router-link-active { background: var(--nw-sidebar-active); color: #fff; }
 
 table.nw-table td, table.nw-table th { vertical-align: middle; }
+
+/* IP 扫描格子墙：一格一 IP，绿=在线（ping 通），灰=离线 */
+.ip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+.ip-cell {
+  border-radius: 8px; padding: 6px 4px; text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: .88rem; line-height: 1.15; border: 1px solid transparent;
+}
+.ip-cell.on {
+  background: color-mix(in srgb, #05c96b 13%, white);
+  border-color: color-mix(in srgb, #05c96b 35%, white); color: #0a8f4d; font-weight: 600;
+}
+.ip-cell.off { background: #eef0f3; border-color: #e0e3e8; color: #98a2ae; }
+.ip-cell .ip-rtt { display: block; font-size: .68rem; font-weight: 400; opacity: .8; }

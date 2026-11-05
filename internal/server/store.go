@@ -911,6 +911,14 @@ FROM floors f ORDER BY f.id`)
 	return out, rows.Err()
 }
 
+// GetFloor 按 ID 取单个楼层（IP 扫描等按楼层操作用）
+func (s *Store) GetFloor(ctx context.Context, id int) (FloorRow, error) {
+	var f FloorRow
+	err := s.pool.QueryRow(ctx, `SELECT id, name, cidr FROM floors WHERE id=$1`, id).
+		Scan(&f.ID, &f.Name, &f.CIDR)
+	return f, err
+}
+
 func (s *Store) UpsertFloor(ctx context.Context, id *int, name, cidr string) (int, error) {
 	var dup int
 	q := `SELECT count(*) FROM floors WHERE name=$1`

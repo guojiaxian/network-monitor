@@ -64,6 +64,7 @@ func (a *AdminAPI) Routes(r chi.Router) {
 
 		r.Get("/floors", a.listFloors)
 		r.Post("/floors", a.upsertFloor)
+		r.Post("/floors/{id}/scan", a.scanFloor)
 		r.Delete("/floors/{id}", a.deleteFloor)
 
 		r.Get("/lines", a.listLines)
