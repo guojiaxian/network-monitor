@@ -8,7 +8,10 @@
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
         <h6 class="mb-0">探针列表</h6>
-        <button class="btn btn-sm btn-primary ms-auto" @click="openProvision()">＋ 新建探针</button>
+        <button class="btn btn-sm btn-outline-primary me-2" :disabled="refreshing" @click="refreshNow">
+          {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
+        </button>
+        <button class="btn btn-sm btn-primary" @click="openProvision()">＋ 新建探针</button>
       </div>
       <table class="table nw-table table-sm align-middle">
         <thead>
@@ -184,7 +187,17 @@ const upMsg = ref(''), upOk = ref(false)
 const opMsg = ref(''), opOk = ref(false)
 const sshCsv = ref(''), importSSHMsg = ref(''), importSSHOok = ref(false)
 const showImport = ref(false)
+const refreshing = ref(false)
 const pModal = ref({ show: false })
+
+async function refreshNow() {
+  refreshing.value = true
+  try {
+    await api.post('/api/admin/probes/refresh', {})
+    setTimeout(load, 6000); setTimeout(load, 15000)
+  } catch (e) { alert(e.message) }
+  setTimeout(() => { refreshing.value = false }, 8000)
+}
 const pJob = reactive({ show: false, running: false, err: '', job: null, timer: null,
   form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '', expected_line_id: 0 } })
 

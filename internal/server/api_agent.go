@@ -156,7 +156,11 @@ func (a *AgentAPI) heartbeat(w http.ResponseWriter, r *http.Request) {
 		a.store.UpdateProbeSysInfo(r.Context(), agentID, hb.SysInfo)
 	}
 	a.eng.OnHeartbeat(agentID, hb)
-	writeJSON(w, map[string]any{"ok": true})
+	resp := map[string]any{"ok": true}
+	if a.eng.PopEgressRefresh(agentID) {
+		resp["refresh_egress"] = true // UI"立即刷新"：让 agent 马上重探出口并回报
+	}
+	writeJSON(w, resp)
 }
 
 // download 探针鉴权后下载指定版本二进制（自更新用）

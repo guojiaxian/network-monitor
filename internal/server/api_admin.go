@@ -84,6 +84,7 @@ func (a *AdminAPI) Routes(r chi.Router) {
 		r.Post("/probes/{id}/ssh/exec", a.sshExec)
 		r.Get("/probes/{id}/ssh/terminal", a.sshTerminal)
 		r.Post("/probes/ssh/import", a.sshImport)
+		r.Post("/probes/refresh", a.refreshProbes)           // 立即刷新探针信息（心跳应答夹带重探出口指令）
 		r.Post("/probes/provision", a.provisionNew)          // 零接触开通：免密+装机+注册+线路自动匹配绑定
 		r.Get("/probes/provision/{job}", a.provisionStatus)  // 开通任务进度轮询
 		r.Post("/probes/{id}/group", a.setProbeGroup)

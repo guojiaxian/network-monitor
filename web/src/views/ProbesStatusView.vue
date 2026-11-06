@@ -3,6 +3,10 @@
     <div class="d-flex align-items-center mb-3">
       <h4 class="mb-0">探针状态</h4>
       <span class="text-secondary small ms-3">每 15 秒自动刷新</span>
+      <button class="btn btn-sm btn-outline-primary ms-2" :disabled="refreshing" @click="refreshNow">
+        {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
+      </button>
+      <span v-if="refreshMsg" class="text-success small ms-2">{{ refreshMsg }}</span>
       <span v-if="err" class="text-danger small ms-3">{{ err }}</span>
       <router-link to="/probes/manage" class="btn btn-sm btn-outline-secondary ms-auto">🛠️ 绑定 / 运维操作 → 探针管理</router-link>
     </div>
@@ -80,6 +84,7 @@ import { fmtTime } from '../utils'
 
 const probes = ref([]), lines = ref([]), err = ref('')
 const expanded = reactive({})
+const refreshing = ref(false), refreshMsg = ref('')
 let timer = null
 
 const isExt = (p) => (p.probe.group || 'internal') === 'external'
@@ -109,6 +114,19 @@ async function load() {
     ])
     err.value = ''
   } catch (e) { err.value = e.message }
+}
+
+async function refreshNow() {
+  refreshing.value = true; refreshMsg.value = ''
+  try {
+    await api.post('/api/admin/probes/refresh', {})
+    refreshMsg.value = '已下发：探针下一心跳（≤15s）重探出口并回报，页面加速刷新中'
+    // 30 秒内 3s 快速轮询，之后恢复 15s
+    clearInterval(timer)
+    let n = 10
+    timer = setInterval(() => { load(); if (--n <= 0) { clearInterval(timer); timer = setInterval(load, 15000) } }, 3000)
+    setTimeout(() => { refreshing.value = false }, 8000)
+  } catch (e) { err.value = e.message; refreshing.value = false }
 }
 
 onMounted(() => { load(); timer = setInterval(load, 15000) })

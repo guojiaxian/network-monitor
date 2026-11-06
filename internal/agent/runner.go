@@ -200,12 +200,28 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 				AgentTS:   time.Now().UnixMilli(),
 				SysInfo:   a.sysInfo,
 			}
-			if err := a.agentReq(ctx, "POST", "/api/agent/heartbeat", &hb, nil); err != nil {
+			var hbResp struct {
+				RefreshEgress bool `json:"refresh_egress"`
+			}
+			if err := a.agentReq(ctx, "POST", "/api/agent/heartbeat", &hb, &hbResp); err != nil {
 				if err == errReRegister {
 					a.abort(errReRegister)
 					return
 				}
 				a.log.Printf("heartbeat: %v", err)
+				continue
+			}
+			if hbResp.RefreshEgress {
+				// UI"立即刷新"：马上重探出口三件套（IP/运营商/归属地/IPv6）并立即回报，
+				// 不等 5 分钟周期（策略路由调整后可即时看到新出口）
+				a.log.Printf("egress refresh requested by center, re-probing now")
+				a.refreshEgress(ctx)
+				hb.PublicIP = a.egressIPOf()
+				hb.IPISP, hb.IPGeo, hb.IPv6 = a.egressExtras()
+				hb.AgentTS = time.Now().UnixMilli()
+				if err := a.agentReq(ctx, "POST", "/api/agent/heartbeat", &hb, nil); err != nil {
+					a.log.Printf("heartbeat: %v", err)
+				}
 			}
 		}
 	}

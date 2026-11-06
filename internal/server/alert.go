@@ -168,6 +168,9 @@ type Engine struct {
 	tsdb *TSDB
 	sched *SpeedSched // 测速调度器（结果回收用，可后置注入）
 
+	refreshMu  sync.Mutex
+	refreshSet map[string]bool // 探针立即刷新出口请求（UI 按钮 → 心跳应答夹带下发）
+
 	mu     sync.Mutex
 	probes map[string]*probeAgg
 	live   map[string]*liveAlert // fingerprint → 进行中的告警
@@ -207,10 +210,11 @@ func (e *Engine) getMeta(ctx context.Context) (map[string]LineMeta, error) {
 
 func NewEngine(cfg Config, store *Store, tsdb *TSDB) *Engine {
 	e := &Engine{
-		cfg:    cfg,
-		store:  store,
-		tsdb:   tsdb,
-		probes: map[string]*probeAgg{},
+		cfg:        cfg,
+		store:      store,
+		tsdb:       tsdb,
+		refreshSet: map[string]bool{},
+		probes:     map[string]*probeAgg{},
 		live:   map[string]*liveAlert{},
 		log:    log.New(os.Stderr, "alert ", log.LstdFlags|log.Lmsgprefix),
 	}
@@ -471,6 +475,25 @@ func (e *Engine) ensureLineForEgress(ctx context.Context, ip, isp, geo string) (
 		id, err = e.store.UpsertLine(ctx, lr)
 	}
 	return id, lr.Name, err
+}
+
+// RequestEgressRefresh 请求指定探针立即重探出口信息（UI"立即刷新"按钮）。
+// 探针无入站通道，指令经心跳应答夹带下发（≤15s 到达探针）。
+func (e *Engine) RequestEgressRefresh(ids []string) {
+	e.refreshMu.Lock()
+	defer e.refreshMu.Unlock()
+	for _, id := range ids {
+		e.refreshSet[id] = true
+	}
+}
+
+// PopEgressRefresh 心跳处理时取走该探针的刷新请求（一次性）
+func (e *Engine) PopEgressRefresh(id string) bool {
+	e.refreshMu.Lock()
+	defer e.refreshMu.Unlock()
+	v := e.refreshSet[id]
+	delete(e.refreshSet, id)
+	return v
 }
 
 func (e *Engine) aggFor(id string) *probeAgg {

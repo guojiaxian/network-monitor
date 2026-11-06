@@ -549,3 +549,28 @@ func (a *AdminAPI) provisionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, job)
 }
+
+// refreshProbes POST /probes/refresh：立即刷新探针信息。
+// 探针无入站端口，指令经心跳应答下发：agent 收到后立即重探出口 IP/运营商/归属地
+// 并马上回报（≤15s + 数秒，相比 5 分钟周期大幅提前）。probe_ids 空=全部探针。
+func (a *AdminAPI) refreshProbes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProbeIDs []string `json:"probe_ids"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req)
+	ids := req.ProbeIDs
+	if len(ids) == 0 {
+		ps, err := a.store.ListProbes(r.Context())
+		if err != nil {
+			httpError(w, 500, "db")
+			return
+		}
+		for _, p := range ps {
+			ids = append(ids, p.ID)
+		}
+	}
+	a.eng.RequestEgressRefresh(ids)
+	a.store.WriteAudit(r.Context(), "system", "probes-refresh",
+		fmt.Sprintf("count=%d", len(ids)))
+	writeJSON(w, map[string]any{"ok": true, "count": len(ids)})
+}
