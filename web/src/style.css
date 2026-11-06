@@ -1,7 +1,8 @@
 /* NetWatch 管理端样式：对齐 Uptime Kuma 的视觉语言（浅色卡片 + 深色侧栏 + 状态点） */
 :root {
-  --nw-sidebar-bg: #1d2635;
+  --nw-sidebar-bg: #e6f0fb;      /* 浅蓝侧栏 */
   --nw-sidebar-active: #2f81f7;
+  --nw-sidebar-text: #3c5a7d;    /* 菜单文字：深蓝灰 */
   --nw-bg: #f4f5f7;
 }
 
@@ -14,24 +15,25 @@ body {
 
 .nw-sidebar {
   width: 220px; flex: 0 0 220px;
-  background: var(--nw-sidebar-bg); color: #cbd2dc;
+  background: var(--nw-sidebar-bg); color: var(--nw-sidebar-text);
   display: flex; flex-direction: column; padding: 14px 10px;
   position: sticky; top: 0; height: 100vh;
+  box-shadow: inset -1px 0 0 rgba(23, 69, 111, .10);
 }
 .nw-sidebar .brand {
-  color: #fff; font-weight: 700; font-size: 1.05rem;
+  color: #17456f; font-weight: 700; font-size: 1.05rem;
   padding: 8px 12px 16px; letter-spacing: .5px;
 }
 .nw-sidebar a {
-  color: #aab3c0; text-decoration: none; padding: 10px 12px;
+  color: var(--nw-sidebar-text); text-decoration: none; padding: 10px 12px;
   border-radius: 8px; display: flex; align-items: center; gap: 8px;
   margin-bottom: 2px; font-size: .95rem;
 }
-.nw-sidebar a:hover { background: rgba(255,255,255,.06); color: #fff; }
+.nw-sidebar a:hover { background: rgba(47,129,247,.10); color: #17456f; }
 .nw-sidebar a.router-link-active { background: var(--nw-sidebar-active); color: #fff; }
 .nw-sidebar .nw-nav-group {
-  font-size: .72rem; letter-spacing: 2px; color: #6c7887;
-  padding: 12px 12px 4px; border-top: 1px solid rgba(255,255,255,.08);
+  font-size: .72rem; letter-spacing: 2px; color: #7f9cc0;
+  padding: 12px 12px 4px; border-top: 1px solid rgba(23, 69, 111, .12);
   margin-top: 10px;
 }
 /* 二级菜单（系统设置子页）：缩进小字号，父项带展开箭头 */
@@ -42,7 +44,7 @@ body {
 .nw-sidebar .nw-submenu a {
   padding: 7px 12px 7px 36px; font-size: .86rem; margin-bottom: 1px;
 }
-.nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #6c7887; padding: 8px 12px; }
+.nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #8aa8c9; padding: 8px 12px; }
 
 .nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; }
 
