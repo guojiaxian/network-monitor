@@ -12,20 +12,20 @@
       <div class="row g-3 mt-0">
         <div class="col-md-6">
           <label class="form-label small mb-1">ICMP 目标（IP）</label>
-          <target-list :items="ac.icmp_targets" add-title="新增 ICMP 目标" add-placeholder="IP，如 223.5.5.5" @add="openTarget" @remove="removeItem" />
+          <target-list :items="ac.icmp_targets" add-title="新增 ICMP 目标" add-placeholder="IP，如 223.5.5.5" @add="openTarget" @edit="editTarget" @remove="removeItem" />
         </div>
         <div class="col-md-6">
           <label class="form-label small mb-1">TCP 目标（host:port）</label>
-          <target-list :items="ac.tcp_targets" add-title="新增 TCP 目标" add-placeholder="host:port，如 www.qq.com:443" @add="openTarget" @remove="removeItem" />
+          <target-list :items="ac.tcp_targets" add-title="新增 TCP 目标" add-placeholder="host:port，如 www.qq.com:443" @add="openTarget" @edit="editTarget" @remove="removeItem" />
         </div>
         <div class="col-md-4">
           <label class="form-label small mb-1">DNS 服务器</label>
-          <target-list :items="ac.dns_servers" add-title="新增 DNS 服务器" add-placeholder="IP，如 223.5.5.5" @add="openTarget" @remove="removeItem" />
+          <target-list :items="ac.dns_servers" add-title="新增 DNS 服务器" add-placeholder="IP，如 223.5.5.5" @add="openTarget" @edit="editTarget" @remove="removeItem" />
         </div>
         <div class="col-md-4"><label class="form-label small mb-1">解析测试域名</label><input v-model="ac.dns_domain" class="form-control form-control-sm" /></div>
         <div class="col-md-4">
           <label class="form-label small mb-1">HTTP 目标（URL）</label>
-          <target-list :items="ac.http_targets" add-title="新增 HTTP 目标" add-placeholder="URL，如 https://www.baidu.com" @add="openTarget" @remove="removeItem" />
+          <target-list :items="ac.http_targets" add-title="新增 HTTP 目标" add-placeholder="URL，如 https://www.baidu.com" @add="openTarget" @edit="editTarget" @remove="removeItem" />
         </div>
         <div class="col-md-4"><label class="form-label small mb-1">注册令牌（探针接入用）</label><input v-model="enrollToken" class="form-control form-control-sm font-monospace" /></div>
         <div class="col-md-8 offset-md-4 text-end align-self-end">
@@ -42,11 +42,11 @@
       <div class="row g-3 mt-0">
         <div class="col-md-4">
           <label class="form-label small mb-1">HTTPS 目标（官网 URL）</label>
-          <target-list :items="ext.http_targets" add-title="新增 HTTPS 目标（官网）" add-placeholder="https://www.单位域名.cn" @add="openTarget" @remove="removeItem" />
+          <target-list :items="ext.http_targets" add-title="新增 HTTPS 目标（官网）" add-placeholder="https://www.单位域名.cn" @add="openTarget" @edit="editTarget" @remove="removeItem" />
         </div>
         <div class="col-md-4">
           <label class="form-label small mb-1">ICMP 目标（域名或 IP）</label>
-          <target-list :items="ext.icmp_targets" add-title="新增外网组 ICMP 目标" add-placeholder="域名或 IP，如 www.单位域名.cn" @add="openTarget" @remove="removeItem" />
+          <target-list :items="ext.icmp_targets" add-title="新增外网组 ICMP 目标" add-placeholder="域名或 IP，如 www.单位域名.cn" @add="openTarget" @edit="editTarget" @remove="removeItem" />
         </div>
         <div class="col-md-2"><label class="form-label small mb-1">Ping 间隔(秒)</label><input v-model.number="ext.interval_ping_s" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-2"><label class="form-label small mb-1">HTTP 间隔(秒)</label><input v-model.number="ext.interval_http_s" type="number" class="form-control form-control-sm" /></div>
@@ -75,7 +75,7 @@
           <tr v-for="(it, i) in im.items" :key="i">
             <td>{{ it.name }}</td><td><span class="badge bg-secondary">{{ it.type }}</span></td>
             <td><code>{{ it.target }}</code></td><td>{{ it.interval_s }}</td>
-            <td><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="im.items.splice(i, 1)">删除</a></td>
+            <td><a href="javascript:void(0)" class="text-primary text-decoration-none me-2" @click="openIM(it, i)">编辑</a><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="im.items.splice(i, 1)">删除</a></td>
           </tr>
         </tbody>
       </table>
@@ -99,7 +99,7 @@
         <tbody>
           <tr v-for="(it, i) in ind.items" :key="i">
             <td>{{ it.name }}</td><td><code>{{ it.target }}</code></td><td>{{ it.interval_s }}</td>
-            <td><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="ind.items.splice(i, 1)">删除</a></td>
+            <td><a href="javascript:void(0)" class="text-primary text-decoration-none me-2" @click="openInd(it, i)">编辑</a><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="ind.items.splice(i, 1)">删除</a></td>
           </tr>
         </tbody>
       </table>
@@ -109,14 +109,14 @@
     </div>
 
     <!-- 新增探测目标（单输入，六类目标共用） -->
-    <ModalBox :show="tModal.show" :title="tModal.title" @close="tModal.show = false" @ok="confirmTarget">
+    <ModalBox :show="tModal.show" :title="tModal.editIdx >= 0 ? '修改目标' : tModal.title" @close="tModal.show = false" @ok="confirmTarget">
       <input v-model="tModal.val" class="form-control form-control-sm font-monospace" :placeholder="tModal.placeholder"
         @keyup.enter="confirmTarget" />
       <div v-if="tModal.err" class="text-danger small mt-2">{{ tModal.err }}</div>
     </ModalBox>
 
     <!-- 新增内网服务监控目标 -->
-    <ModalBox :show="imModal.show" title="新增内网服务监控目标" @close="imModal.show = false" @ok="confirmIM">
+    <ModalBox :show="imModal.show" :title="imModal.idx >= 0 ? '编辑内网服务监控目标' : '新增内网服务监控目标'" @close="imModal.show = false" @ok="confirmIM">
       <div class="row g-2">
         <div class="col-md-6"><label class="form-label small mb-1">名称 <span class="text-danger">*</span></label>
           <input v-model="imModal.name" class="form-control form-control-sm" placeholder="如 OA系统" /></div>
@@ -133,7 +133,7 @@
     </ModalBox>
 
     <!-- 新增行业网监测 IP -->
-    <ModalBox :show="indModal.show" title="新增行业网监测 IP（仅 ICMP）" @close="indModal.show = false" @ok="confirmInd">
+    <ModalBox :show="indModal.show" :title="indModal.idx >= 0 ? '编辑行业网监测 IP' : '新增行业网监测 IP（仅 ICMP）'" @close="indModal.show = false" @ok="confirmInd">
       <div class="row g-2">
         <div class="col-md-6"><label class="form-label small mb-1">名称 <span class="text-danger">*</span></label>
           <input v-model="indModal.name" class="form-control form-control-sm" placeholder="如 行业网核心交换" /></div>
@@ -159,9 +159,9 @@ const ext = ref({ http_targets: [], icmp_targets: [] }), extMsg = ref(''), extOk
 const im = ref({ enabled: false, items: [] }), imMsg = ref(''), imOk = ref(false)
 const ind = ref({ enabled: false, items: [] }), indMsg = ref(''), indOk = ref(false)
 
-const tModal = reactive({ show: false, title: '', placeholder: '', arr: null, val: '', err: '' })
-const imModal = reactive({ show: false, name: '', type: 'http', target: '', interval_s: 30, err: '' })
-const indModal = reactive({ show: false, name: '', target: '', interval_s: 30, err: '' })
+const tModal = reactive({ show: false, title: '', placeholder: '', arr: null, val: '', err: '', editIdx: -1 })
+const imModal = reactive({ show: false, name: '', type: 'http', target: '', interval_s: 30, err: '', idx: -1 })
+const indModal = reactive({ show: false, name: '', target: '', interval_s: 30, err: '', idx: -1 })
 
 async function load() {
   const s = await api.get('/api/admin/settings')
@@ -178,34 +178,48 @@ async function load() {
   if (!Array.isArray(ind.value.items)) ind.value.items = []
 }
 
-// ---- 目标弹窗 ----
+// ---- 目标弹窗（新增 + 点击 badge 编辑） ----
 function openTarget(title, placeholder, arr) {
-  Object.assign(tModal, { show: true, title, placeholder, arr, val: '', err: '' })
+  Object.assign(tModal, { show: true, title, placeholder, arr, val: '', err: '', editIdx: -1 })
+}
+function editTarget(arr, i) {
+  Object.assign(tModal, { show: true, title: '修改目标', placeholder: '', arr, val: arr[i], err: '', editIdx: i })
 }
 function confirmTarget() {
   const v = (tModal.val || '').trim()
   if (!v) { tModal.err = '请输入目标'; return }
-  if (tModal.arr.includes(v)) { tModal.err = '该目标已存在'; return }
-  tModal.arr.push(v)
+  if (tModal.arr.includes(v) && tModal.arr[tModal.editIdx] !== v) { tModal.err = '该目标已存在'; return }
+  if (tModal.editIdx >= 0) tModal.arr.splice(tModal.editIdx, 1, v)
+  else tModal.arr.push(v)
   tModal.show = false
 }
 function removeItem(arr, i) { arr.splice(i, 1) }
 
 // ---- 内网监控/行业网弹窗 ----
-function openIM() { Object.assign(imModal, { show: true, name: '', type: 'http', target: '', interval_s: 30, err: '' }) }
+function openIM(it, idx) {
+  Object.assign(imModal, it ? { show: true, name: it.name, type: it.type, target: it.target, interval_s: it.interval_s, err: '', idx }
+                           : { show: true, name: '', type: 'http', target: '', interval_s: 30, err: '', idx: -1 })
+}
 function confirmIM() {
   imModal.err = ''
   if (!imModal.name.trim()) { imModal.err = '请填写名称'; return }
   if (!imModal.target.trim()) { imModal.err = '请填写目标'; return }
-  im.value.items.push({ name: imModal.name.trim(), type: imModal.type, target: imModal.target.trim(), interval_s: imModal.interval_s || 30 })
+  const row = { name: imModal.name.trim(), type: imModal.type, target: imModal.target.trim(), interval_s: imModal.interval_s || 30 }
+  if (imModal.idx >= 0) im.value.items.splice(imModal.idx, 1, row)
+  else im.value.items.push(row)
   imModal.show = false
 }
-function openInd() { Object.assign(indModal, { show: true, name: '', target: '', interval_s: 30, err: '' }) }
+function openInd(it, idx) {
+  Object.assign(indModal, it ? { show: true, name: it.name, target: it.target, interval_s: it.interval_s, err: '', idx }
+                             : { show: true, name: '', target: '', interval_s: 30, err: '', idx: -1 })
+}
 function confirmInd() {
   indModal.err = ''
   if (!indModal.name.trim()) { indModal.err = '请填写名称'; return }
   if (!indModal.target.trim()) { indModal.err = '请填写监测 IP'; return }
-  ind.value.items.push({ name: indModal.name.trim(), target: indModal.target.trim(), interval_s: indModal.interval_s || 30 })
+  const row = { name: indModal.name.trim(), target: indModal.target.trim(), interval_s: indModal.interval_s || 30 }
+  if (indModal.idx >= 0) ind.value.items.splice(indModal.idx, 1, row)
+  else ind.value.items.push(row)
   indModal.show = false
 }
 

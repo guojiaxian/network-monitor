@@ -12,19 +12,26 @@
           </tr>
         </tbody>
       </table>
-      <div class="row g-2 align-items-end">
-        <div class="col-md-3"><input v-model="nu.username" class="form-control form-control-sm" placeholder="用户名" /></div>
-        <div class="col-md-3"><input v-model="nu.password" type="password" class="form-control form-control-sm" placeholder="密码（≥8位）" /></div>
-        <div class="col-md-2">
-          <select v-model="nu.role" class="form-select form-select-sm">
-            <option value="viewer">观察者（只读）</option>
-            <option value="admin">管理员</option>
-          </select>
-        </div>
-        <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" @click="addUser">新增用户</button></div>
+      <div class="d-flex align-items-center mb-1">
+        <span class="text-secondary small">角色决定权限：管理员可执行全部写操作，观察者只读。</span>
+        <button class="btn btn-sm btn-primary ms-auto" @click="openUser()">＋ 新增用户</button>
       </div>
-      <div v-if="userMsg" class="small mt-2" :class="userOk ? 'text-success' : 'text-danger'">{{ userMsg }}</div>
+      <div v-if="userMsg" class="small" :class="userOk ? 'text-success' : 'text-danger'">{{ userMsg }}</div>
     </div>
+
+    <!-- 新增用户弹窗 -->
+    <ModalBox :show="nuModal.show" title="新增用户" @close="nuModal.show = false" @ok="addUser">
+      <div class="mb-2"><label class="form-label small mb-1">用户名 <span class="text-danger">*</span></label>
+        <input v-model="nuModal.username" class="form-control form-control-sm" placeholder="如 zhiban01" /></div>
+      <div class="mb-2"><label class="form-label small mb-1">密码 <span class="text-danger">*</span>（≥8 位）</label>
+        <input v-model="nuModal.password" type="password" class="form-control form-control-sm" autocomplete="new-password" /></div>
+      <div><label class="form-label small mb-1">角色</label>
+        <select v-model="nuModal.role" class="form-select form-select-sm">
+          <option value="viewer">观察者（只读）</option>
+          <option value="admin">管理员</option>
+        </select></div>
+      <div v-if="nuModal.err" class="text-danger small mt-2">{{ nuModal.err }}</div>
+    </ModalBox>
 
     <div class="nw-card mb-3">
       <h6>操作审计日志（最近 100 条）</h6>
@@ -45,12 +52,16 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '../../api'
+import ModalBox from '../../components/ModalBox.vue'
 import { fmtTime } from '../../utils'
 
-const users = ref([]), nu = ref({ username: '', password: '', role: 'viewer' }), userMsg = ref(''), userOk = ref(false)
+const users = ref([]), userMsg = ref(''), userOk = ref(false)
 const audits = ref([])
+const nuModal = reactive({ show: false, username: '', password: '', role: 'viewer', err: '' })
+
+function openUser() { Object.assign(nuModal, { show: true, username: '', password: '', role: 'viewer', err: '' }) }
 
 const fmt = fmtTime
 
@@ -61,13 +72,15 @@ async function load() {
 }
 
 async function addUser() {
-  userMsg.value = ''; userOk.value = false
+  nuModal.err = ''
+  if (!nuModal.username.trim()) { nuModal.err = '请填写用户名'; return }
+  if ((nuModal.password || '').length < 8) { nuModal.err = '密码至少 8 位'; return }
   try {
-    await api.post('/api/admin/users', { ...nu.value })
+    await api.post('/api/admin/users', { username: nuModal.username.trim(), password: nuModal.password, role: nuModal.role })
+    nuModal.show = false
     userMsg.value = '已创建'; userOk.value = true
-    nu.value = { username: '', password: '', role: 'viewer' }
     users.value = await api.get('/api/admin/users')
-  } catch (e) { userMsg.value = e.message }
+  } catch (e) { nuModal.err = e.message }
 }
 
 async function delUser(u) {

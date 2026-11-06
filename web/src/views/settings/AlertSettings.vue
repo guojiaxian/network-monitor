@@ -17,19 +17,7 @@
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
         <h6 class="mb-0">静默窗口（期间该线路不触发新告警）</h6>
-        <button class="btn btn-sm btn-outline-primary ms-auto" @click="showSilence = !showSilence">{{ showSilence ? '收起' : '新增静默' }}</button>
-      </div>
-      <div v-if="showSilence" class="row g-2 align-items-end mb-2">
-        <div class="col-md-3">
-          <label class="form-label small mb-1">线路</label>
-          <select v-model.number="sil.line_id" class="form-select form-select-sm">
-            <option :value="0">全部线路</option>
-            <option v-for="l in lines" :key="l.id" :value="l.id">{{ l.name }}</option>
-          </select>
-        </div>
-        <div class="col-md-2"><label class="form-label small mb-1">时长（小时）</label><input v-model.number="sil.hours" type="number" min="0.5" step="0.5" class="form-control form-control-sm" /></div>
-        <div class="col-md-4"><label class="form-label small mb-1">原因（如线路商割接）</label><input v-model="sil.reason" class="form-control form-control-sm" /></div>
-        <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" @click="addSilence">创建</button></div>
+        <button class="btn btn-sm btn-outline-primary ms-auto" @click="openSilence()">＋ 新增静默</button>
       </div>
       <table class="table nw-table table-sm align-middle mb-0">
         <thead><tr><th>范围</th><th>开始</th><th>结束</th><th>原因</th><th>创建人</th><th style="width:80px"></th></tr></thead>
@@ -47,18 +35,36 @@
       </table>
       <p class="text-secondary small mb-0 mt-2">维护割接前创建静默窗口，期间该线路不触发新告警；告警中心页会正常展示历史记录。</p>
     </div>
+
+    <!-- 新增静默弹窗 -->
+    <ModalBox :show="silModal.show" title="新增静默窗口" @close="silModal.show = false" @ok="addSilence">
+      <div class="row g-2">
+        <div class="col-md-6">
+          <label class="form-label small mb-1">范围</label>
+          <select v-model.number="silModal.line_id" class="form-select form-select-sm">
+            <option :value="0">全部线路</option>
+            <option v-for="l in lines" :key="l.id" :value="l.id">{{ l.name }}</option>
+          </select>
+        </div>
+        <div class="col-md-6"><label class="form-label small mb-1">时长（小时）</label><input v-model.number="silModal.hours" type="number" min="0.5" step="0.5" class="form-control form-control-sm" /></div>
+        <div class="col-12"><label class="form-label small mb-1">原因（如线路商割接）</label><input v-model="silModal.reason" class="form-control form-control-sm" /></div>
+      </div>
+      <div v-if="silModal.err" class="text-danger small mt-2">{{ silModal.err }}</div>
+    </ModalBox>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '../../api'
+import ModalBox from '../../components/ModalBox.vue'
 import { toCSV, parseCSV, fmtTime } from '../../utils'
 
 const als = ref({}), alsP0P1Str = ref(''), alsP2Str = ref(''), alsMsg = ref(''), alsOk = ref(false)
 const silences = ref([]), lines = ref([])
-const showSilence = ref(false)
-const sil = ref({ line_id: 0, hours: 2, reason: '' })
+const silModal = reactive({ show: false, line_id: 0, hours: 2, reason: '', err: '' })
+
+function openSilence() { Object.assign(silModal, { show: true, line_id: 0, hours: 2, reason: '', err: '' }) }
 
 const fmt = fmtTime
 
@@ -85,15 +91,17 @@ async function saveALS() {
 }
 
 async function addSilence() {
+  silModal.err = ''
+  if (!silModal.hours || silModal.hours <= 0) { silModal.err = '时长须大于 0'; return }
   try {
     await api.post('/api/admin/silences', {
-      line_id: sil.value.line_id || null,
-      hours: sil.value.hours,
-      reason: sil.value.reason,
+      line_id: silModal.line_id || null,
+      hours: silModal.hours,
+      reason: silModal.reason,
     })
-    showSilence.value = false
+    silModal.show = false
     await load()
-  } catch (e) { alert(e.message) }
+  } catch (e) { silModal.err = e.message }
 }
 
 async function delSilence(s) {
