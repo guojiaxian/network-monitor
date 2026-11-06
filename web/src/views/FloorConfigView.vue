@@ -1,7 +1,9 @@
 <template>
   <div>
-    <h4 class="mb-3">楼层配置</h4>
-    <p class="text-secondary small">楼层（子网）是线路归属与 IP 扫描的锚点：线路按楼层归类展示，「IP 扫描」页按楼层子网逐 IP 在线检测。</p>
+    <div class="d-flex align-items-center mb-3">
+      <h4 class="mb-0">楼层配置</h4>
+      <span class="text-secondary small ms-3">楼层（子网）是线路归属与 IP 扫描的锚点；楼层顺序即总览/大屏展示顺序</span>
+    </div>
 
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
@@ -21,7 +23,6 @@
           <tr v-if="!floors.length"><td colspan="4" class="text-secondary">暂无楼层，点击右上角「＋ 新增楼层」</td></tr>
         </tbody>
       </table>
-      <p class="text-secondary small mb-0">删除楼层不会删除其下线路（线路将变为未关联）；楼层顺序即总览/大屏展示顺序。</p>
     </div>
 
     <!-- 新增/编辑楼层 -->
