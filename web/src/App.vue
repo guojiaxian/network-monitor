@@ -11,14 +11,15 @@
       <router-link to="/history">📜 探测历史</router-link>
       <router-link to="/reports">📊 报表</router-link>
       <div class="nw-nav-group">配置管理</div>
+      <router-link to="/floors">🏢 楼层配置</router-link>
       <router-link to="/lines">🌐 线路配置</router-link>
-      <router-link to="/probes/manage">🛠️ 探针管理</router-link>
+      <router-link to="/probes/manage">🛠️ 探针配置</router-link>
+      <router-link to="/probing">🛰️ 探测配置</router-link>
       <!-- 低频设置收进二级菜单：进入设置域自动展开，离开自动收起，无三级 -->
       <router-link to="/settings" class="nw-nav-parent">⚙️ 系统设置</router-link>
       <div class="nw-submenu" v-show="settingsOpen">
         <router-link to="/settings/notify">通知渠道</router-link>
         <router-link to="/settings/alert">告警策略</router-link>
-        <router-link to="/settings/probe">探测配置</router-link>
         <router-link to="/settings/collect">采集与测速</router-link>
         <router-link to="/settings/report">报表推送</router-link>
         <router-link to="/settings/account">用户与审计</router-link>
@@ -60,12 +61,12 @@ const showLayout = computed(() => !['/login', '/setup', '/screen'].includes(rout
 const settingsOpen = computed(() => route.path.startsWith('/settings'))
 // 顶栏面包屑：分组 / 页面（路由→标题映射，与侧栏菜单一致）
 const TITLES = [
-  ['/', '', '总览'], ['/alerts', '监控展示', '告警中心'], ['/probes/manage', '配置管理', '探针管理'],
+  ['/', '', '总览'], ['/alerts', '监控展示', '告警中心'], ['/probes/manage', '配置管理', '探针配置'], ['/floors', '配置管理', '楼层配置'], ['/probing', '配置管理', '探测配置'],
   ['/probes/', '监控展示', '网页终端'], ['/probes', '监控展示', '探针状态'], ['/line-status', '监控展示', '线路状态'], ['/scan', '监控展示', 'IP 扫描'],
   ['/history', '监控展示', '探测历史'], ['/reports', '监控展示', '报表'],
   ['/lines/', '配置管理', '线路详情'], ['/lines', '配置管理', '线路配置'],
   ['/settings/notify', '系统设置', '通知渠道'], ['/settings/alert', '系统设置', '告警策略'],
-  ['/settings/probe', '系统设置', '探测配置'], ['/settings/collect', '系统设置', '采集与测速'],
+  ['/probing', '配置管理', '探测配置'], ['/settings/collect', '系统设置', '采集与测速'],
   ['/settings/report', '系统设置', '报表推送'], ['/settings/account', '系统设置', '用户与审计'],
 ]
 const crumb = computed(() => {

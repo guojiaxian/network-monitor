@@ -8,7 +8,7 @@
       </button>
       <span v-if="refreshMsg" class="text-success small ms-2">{{ refreshMsg }}</span>
       <span v-if="err" class="text-danger small ms-3">{{ err }}</span>
-      <router-link to="/probes/manage" class="btn btn-sm btn-outline-secondary ms-auto">🛠️ 绑定 / 运维操作 → 探针管理</router-link>
+      <router-link to="/probes/manage" class="btn btn-sm btn-outline-secondary ms-auto">🛠️ 绑定 / 运维操作 → 探针配置</router-link>
     </div>
 
     <div class="nw-card mb-3">
@@ -77,7 +77,7 @@
         </tbody>
       </table>
     </div>
-    <p class="text-secondary small">本页为只读总览；探针的绑定线路、分组、SSH 运维与版本升级请前往 <router-link to="/probes/manage">探针管理</router-link>。探针自身内存/磁盘连续超 90% 会触发 P2"探针资源紧张"告警。</p>
+    <p class="text-secondary small">本页为只读总览；探针的绑定线路、分组、SSH 运维与版本升级请前往 <router-link to="/probes/manage">探针配置</router-link>。探针自身内存/磁盘连续超 90% 会触发 P2"探针资源紧张"告警。</p>
   </div>
 </template>
 

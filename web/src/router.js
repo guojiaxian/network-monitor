@@ -6,12 +6,13 @@ const routes = [
   { path: '/login', component: () => import('./views/LoginView.vue') },
   { path: '/', component: () => import('./views/DashboardView.vue'), meta: { auth: true } },
   { path: '/lines', component: () => import('./views/LinesView.vue'), meta: { auth: true } },
+  { path: '/floors', component: () => import('./views/FloorConfigView.vue'), meta: { auth: true } }, // 楼层配置
   { path: '/lines/:id', component: () => import('./views/LineDetailView.vue'), meta: { auth: true } },
   { path: '/probes', component: () => import('./views/ProbesStatusView.vue'), meta: { auth: true } }, // 探针状态：只读展示
   { path: '/line-status', component: () => import('./views/LineStatusView.vue'), meta: { auth: true } }, // 线路状态：各线路关键运行信息
 
   { path: '/scan', component: () => import('./views/ScanView.vue'), meta: { auth: true } }, // 楼层 IP 扫描（触发为 POST，观察者会被 403）
-  { path: '/probes/manage', component: () => import('./views/ProbesManageView.vue'), meta: { auth: true } }, // 探针管理：绑定/运维/升级
+  { path: '/probes/manage', component: () => import('./views/ProbesManageView.vue'), meta: { auth: true } }, // 探针配置：绑定/运维/升级
   { path: '/probes/:id/term', component: () => import('./views/SshTermView.vue'), meta: { auth: true } },
   { path: '/alerts', component: () => import('./views/AlertsView.vue'), meta: { auth: true } },
   { path: '/history', component: () => import('./views/HistoryView.vue'), meta: { auth: true } },
@@ -25,12 +26,13 @@ const routes = [
       { path: '', redirect: '/settings/notify' },
       { path: 'notify', component: () => import('./views/settings/NotifySettings.vue'), meta: { auth: true } },
       { path: 'alert', component: () => import('./views/settings/AlertSettings.vue'), meta: { auth: true } },
-      { path: 'probe', component: () => import('./views/settings/ProbeSettings.vue'), meta: { auth: true } },
       { path: 'collect', component: () => import('./views/settings/CollectSettings.vue'), meta: { auth: true } },
       { path: 'report', component: () => import('./views/settings/ReportSettings.vue'), meta: { auth: true } },
       { path: 'account', component: () => import('./views/settings/AccountAudit.vue'), meta: { auth: true } },
     ],
   },
+  { path: '/probing', component: () => import('./views/settings/ProbeSettings.vue'), meta: { auth: true } }, // 探测配置（自系统设置拆出为一级页）
+  { path: '/settings/probe', redirect: '/probing' }, // 旧深链重定向
   { path: '/screen', component: () => import('./views/ScreenView.vue') }, // 大屏：公开只读
 ]
 

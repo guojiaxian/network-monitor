@@ -1,5 +1,7 @@
 <template>
   <div>
+    <h4 class="mb-3">探测配置</h4>
+    <p class="text-secondary small">内网组探测目标/间隔下发至全部楼层探针（约 60 秒生效）；外网组探测单位官网；内网服务与行业网由中心服务器自身探测。</p>
     <div class="nw-card mb-3">
       <h6>探测配置（内网组·下发到全部楼层探针）</h6>
       <div class="row g-2">

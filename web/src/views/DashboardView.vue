@@ -18,7 +18,7 @@
     <div v-if="unbound.length" class="alert alert-warning py-2">
       有 {{ unbound.length }} 台探针未绑定线路：
       <code v-for="p in unbound" :key="p.id" class="me-2" :title="p.id">{{ p.name || p.hostname || p.id.slice(0,8) }}</code>
-      → 前往 <router-link to="/probes/manage">探针管理</router-link> 完成绑定
+      → 前往 <router-link to="/probes/manage">探针配置</router-link> 完成绑定
     </div>
 
     <div v-if="extProbes.length" class="nw-card mb-3">
@@ -87,7 +87,7 @@
     <h5 class="mb-3 mt-2">🔀 内网 → 外网 · 宽带线路</h5>
     <div v-if="!lines.length && !err" class="nw-card text-center py-5 text-secondary">
       尚未录入线路。请先到 <router-link to="/lines">线路配置</router-link> 完成配置，再在
-      <router-link to="/probes/manage">探针管理</router-link> 中绑定探针。
+      <router-link to="/probes/manage">探针配置</router-link> 中绑定探针。
     </div>
 
     <div class="row g-3">
