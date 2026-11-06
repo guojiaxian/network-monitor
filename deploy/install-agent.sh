@@ -43,16 +43,15 @@ if [ -n "${NW_SSH_PUBKEY:-}" ]; then
   fi
 fi
 
-# ---------- 探针名称：设置 OS 主机名（克隆模板必做） ----------
-# 中文等非 ASCII 名称转安全形式时会被替换成 -（如"探针-201"→"201"），
-# 纯数字主机名不合规也不易辨识：开头是数字时自动加 "probe-" 前缀（→"probe-201"）。
-if [ -n "$NAME" ] && command -v hostnamectl >/dev/null; then
+# ---------- OS 主机名（命名规则 2026-11-06）：固定 probe-<本机IP尾段>，与显示名称解耦 ----------
+# 显示名称（$NAME/第4参数）仅随注册上报；主机名统一取本机 IP 尾段（如 10.8.14.201 → probe-201）
+if command -v hostnamectl >/dev/null; then
   CUR_HOST=$(hostname)
-  SAFE=$(echo "$NAME" | LC_ALL=C sed 's/[^a-zA-Z0-9.-]/-/g; s/-\+/-/g; s/^-//; s/-$//')
-  case "$SAFE" in [0-9]*) SAFE="probe-$SAFE" ;; esac
+  LOCAL_IP=$(ip -4 -o addr show scope global 2>/dev/null | head -1 | awk '{print $4}' | cut -d/ -f1)
+  SAFE="probe-${LOCAL_IP##*.}"
   if [ -n "$SAFE" ] && [ "$CUR_HOST" != "$SAFE" ]; then
     hostnamectl set-hostname "$SAFE" && ok "OS 主机名已设置为: $SAFE"
-    [ "$SAFE" != "$NAME" ] && warn "名称含非 ASCII 字符，OS 主机名使用 ASCII 形式 $SAFE（NetWatch 内显示名称仍为 $NAME）"
+    [ "$SAFE" != "$NAME" ] && [ -n "$NAME" ] && warn "显示名称为 $NAME（NetWatch 内显示），OS 主机名按规则为 $SAFE"
   fi
 fi
 

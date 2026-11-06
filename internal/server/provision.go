@@ -107,14 +107,15 @@ func (a *AdminAPI) provisionRun(job *ProvisionJob, port int, user, pass string) 
 		a.store.WriteAudit(ctx, "system", "provision-fail:"+job.IP, job.Err)
 	}
 
-	// 0. 探针名称默认值：probe-<IP 尾段>（英文+数字主机名，符合命名规范）
+	// 0. 命名规则（2026-11-06 用户确认）：显示名称=probe-<序号>（管理员按线路表
+	// 填写，留空则回退 probe-<IP尾段>）；OS 主机名固定 probe-<IP尾段>（与名称解耦）
+	lastOctet := job.IP[strings.LastIndex(job.IP, ".")+1:]
+	hostname := "probe-" + lastOctet
 	name := job.Name
 	if name == "" {
-		lastOctet := job.IP[strings.LastIndex(job.IP, ".")+1:]
-		name = "probe-" + lastOctet
+		name = hostname
 	}
-	safe := safeHostname(name)
-	job.step("目标 %s（用户 %s）→ 名称 %s / 主机名 %s", job.IP, user, name, safe)
+	job.step("目标 %s（用户 %s）→ 名称 %s / 主机名 %s", job.IP, user, name, hostname)
 
 	// 1. SSH 连通性（密码认证）
 	job.step("测试 SSH 连接…")
@@ -141,8 +142,8 @@ func (a *AdminAPI) provisionRun(job *ProvisionJob, port int, user, pass string) 
 	}
 
 	// 3. 主机名
-	job.step("设置 OS 主机名 %s…", safe)
-	if _, err := sshRun(job.IP, port, user, pass, "hostnamectl set-hostname "+safe, 15*time.Second); err != nil {
+	job.step("设置 OS 主机名 %s…", hostname)
+	if _, err := sshRun(job.IP, port, user, pass, "hostnamectl set-hostname "+hostname, 15*time.Second); err != nil {
 		job.step("⚠ 主机名设置失败（%v），继续", err)
 	}
 
