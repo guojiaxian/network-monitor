@@ -34,6 +34,14 @@ body {
   padding: 12px 12px 4px; border-top: 1px solid rgba(255,255,255,.08);
   margin-top: 10px;
 }
+/* 二级菜单（系统设置子页）：缩进小字号，父项带展开箭头 */
+.nw-sidebar .nw-nav-parent::after {
+  content: '▾'; margin-left: auto; font-size: .68rem; opacity: .55;
+}
+.nw-sidebar .nw-submenu { display: flex; flex-direction: column; margin: 2px 0 4px; }
+.nw-sidebar .nw-submenu a {
+  padding: 7px 12px 7px 36px; font-size: .86rem; margin-bottom: 1px;
+}
 .nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #6c7887; padding: 8px 12px; }
 
 .nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; }
