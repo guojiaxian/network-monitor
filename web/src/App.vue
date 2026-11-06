@@ -6,6 +6,7 @@
       <router-link to="/">📋 总览</router-link>
       <router-link to="/alerts">🔔 告警中心</router-link>
       <router-link to="/probes">📡 探针状态</router-link>
+      <router-link to="/line-status">📈 线路状态</router-link>
       <router-link to="/scan">🔎 IP 扫描</router-link>
       <router-link to="/history">📜 探测历史</router-link>
       <router-link to="/reports">📊 报表</router-link>
@@ -60,7 +61,7 @@ const settingsOpen = computed(() => route.path.startsWith('/settings'))
 // 顶栏面包屑：分组 / 页面（路由→标题映射，与侧栏菜单一致）
 const TITLES = [
   ['/', '', '总览'], ['/alerts', '监控展示', '告警中心'], ['/probes/manage', '配置管理', '探针管理'],
-  ['/probes/', '监控展示', '网页终端'], ['/probes', '监控展示', '探针状态'], ['/scan', '监控展示', 'IP 扫描'],
+  ['/probes/', '监控展示', '网页终端'], ['/probes', '监控展示', '探针状态'], ['/line-status', '监控展示', '线路状态'], ['/scan', '监控展示', 'IP 扫描'],
   ['/history', '监控展示', '探测历史'], ['/reports', '监控展示', '报表'],
   ['/lines/', '配置管理', '线路详情'], ['/lines', '配置管理', '线路配置'],
   ['/settings/notify', '系统设置', '通知渠道'], ['/settings/alert', '系统设置', '告警策略'],
