@@ -11,16 +11,26 @@
         <button class="btn btn-sm btn-primary ms-auto" @click="openFloor()">＋ 新增楼层</button>
       </div>
       <table class="table nw-table table-sm align-middle mb-2 table-fixed">
-        <thead><tr><th style="width:18%">楼层名</th><th style="width:44%">子网 CIDR</th><th style="width:16%">线路数</th><th style="width:170px"></th></tr></thead>
+        <thead><tr><th style="width:12%">楼层名</th><th style="width:20%">子网 CIDR</th><th style="width:7%">线路数</th><th style="width:41%">关联线路（出口公网 IP）</th><th style="width:170px"></th></tr></thead>
         <tbody>
           <tr v-for="f in floors" :key="f.id">
             <td>{{ f.name }}</td><td><code>{{ f.cidr || '—' }}</code></td><td>{{ f.line_count }}</td>
+            <td class="small">
+              <template v-if="f.lines && f.lines.length">
+                <div v-for="l in f.lines" :key="l.id">
+                  <router-link :to="'/lines/' + l.id">{{ l.name }}</router-link>
+                  <code v-if="l.public_ip" class="ms-1">{{ l.public_ip }}</code>
+                  <span v-else class="text-secondary ms-1">出口待探测</span>
+                </div>
+              </template>
+              <span v-else class="text-secondary">—</span>
+            </td>
             <td class="text-end">
               <button class="btn btn-sm btn-outline-primary me-1" @click="openFloor(f)">编辑</button>
               <button class="btn btn-sm btn-outline-danger" @click="delFloor(f)">删除</button>
             </td>
           </tr>
-          <tr v-if="!floors.length"><td colspan="4" class="text-secondary">暂无楼层，点击右上角「＋ 新增楼层」</td></tr>
+          <tr v-if="!floors.length"><td colspan="5" class="text-secondary">暂无楼层，点击右上角「＋ 新增楼层」</td></tr>
         </tbody>
       </table>
     </div>

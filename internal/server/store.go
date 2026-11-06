@@ -902,10 +902,17 @@ func (s *Store) SetProbeGroup(ctx context.Context, probeID, group string) error 
 // ---------- 楼层与线路 ----------
 
 type FloorRow struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	CIDR      string `json:"cidr"`
-	LineCount int    `json:"line_count"`
+	ID        int              `json:"id"`
+	Name      string           `json:"name"`
+	CIDR      string           `json:"cidr"`
+	LineCount int              `json:"line_count"`
+	Lines     []FloorLineBrief `json:"lines"` // 关联线路（名称+出口公网 IP，楼层配置页展示用）
+}
+
+type FloorLineBrief struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	PublicIP string `json:"public_ip"`
 }
 
 type FloorBrief struct {
@@ -931,7 +938,9 @@ type LineRow struct {
 func (s *Store) ListFloors(ctx context.Context) ([]FloorRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT f.id, f.name, f.cidr,
-       (SELECT count(*) FROM line_floors lf WHERE lf.floor_id = f.id) AS line_count
+       (SELECT count(*) FROM line_floors lf WHERE lf.floor_id = f.id) AS line_count,
+       COALESCE((SELECT json_agg(json_build_object('id',l.id,'name',l.name,'public_ip',l.public_ip) ORDER BY l.id)
+                 FROM line_floors lf JOIN lines l ON l.id = lf.line_id WHERE lf.floor_id = f.id), '[]'::json)
 FROM floors f ORDER BY f.id`)
 	if err != nil {
 		return nil, err
@@ -940,9 +949,11 @@ FROM floors f ORDER BY f.id`)
 	out := []FloorRow{}
 	for rows.Next() {
 		var r FloorRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.CIDR, &r.LineCount); err != nil {
+		var linesJSON []byte
+		if err := rows.Scan(&r.ID, &r.Name, &r.CIDR, &r.LineCount, &linesJSON); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(linesJSON, &r.Lines)
 		out = append(out, r)
 	}
 	return out, rows.Err()
