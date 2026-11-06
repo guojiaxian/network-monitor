@@ -23,7 +23,17 @@
 **2026-11-06 数据库文档成册（docs/09）**：结构/指标/运维配方详见该册；生产 settings 表仅 9 键（令牌未落库，实际生效=unit 环境变量）。
 **2026-11-06 探针部署文档成册（docs/08）**：《08-探针部署与配置手册》覆盖原理/准备/单台与批量安装/绑定分组/SSH 凭据/探测与测速配置/外网组/升级/验证清单/排查；docs/04 §3 瘦身为速查并指向它，docs/04 旧端口 8080 标注生产实值 :80、旧界面引用全部改为重排后路径。
 
-**零接触开通（2026-11-06）**：internal/server/provision.go——「探针管理→＋新建探针」弹窗输入全新服务器 IP/账号/密码（一次），后台异步任务（内存态 provJobs，POST /probes/provision 秒回 job_id、GET /probes/provision/{id} 轮询）：SSH 免密（NW_SSH_PUBKEY_FILE=/opt/netwatch/.ssh-center.pub）→ 主机名 probe-<尾段> → 二进制上传（**sha256 校验**）→ systemd → 等注册（源 IP 匹配，≤60s）→ 等出口 IP（引擎快照，≤90s）→ 出口 IP 匹配 lines.public_ip 绑定（无匹配自动建线=运营商-出口IP，按楼层 CIDR 归属楼层）。**坑：agentBinaryPath 取 server 同目录（/opt/netwatch/bin）——发布时 netwatch-agent 也要同步更新到该目录，仓库 bin/ 不等于部署 bin/**（本次实测踩坑：误判为二进制损坏排查半天）。10.8.14.202 实测 20s 全通过（含后台 SSH 运维双通道）。**2026-11-06 拓扑澄清（用户明确）**：全部探针位于 10.8.14.0/23 管理网段，防火墙按源 IP 策略路由给每台探针分配各自出口线路——**出口 IP ↔ 线路 ↔ 楼层是唯一识别链**；按探针源 IP/楼层 CIDR 猜楼层的逻辑已删除（该拓扑下必然错），楼层只随线路；开通弹窗支持"预期线路"可选校验（实际出口不符→当场告警，装机时发现策略路由配错），同线路已有探针也会提示。**立即刷新按钮（2026-11-06）**：探针无入站端口，刷新指令走心跳应答夹带——POST /probes/refresh（空=全部）→ Engine.refreshSet → 心跳应答 refresh_egress:true → agent 立即重探出口三件套并马上回报（实测 7s 到达），探针日志留痕 "egress refresh requested"；状态页/管理页均有 🔄 立即刷新按钮（点击后 30s 内 3s 快速轮询）。**出口变更自愈（2026-11-06）**：心跳对账升级为 egress-identity 语义——绑定线路 IP 为空=首次登记回填；出口与绑定线路不符=自动改绑到出口对应线路（无匹配自动建线，审计 egress-rebind），**绝不回写原线路 public_ip**（防污染线路身份）；探针探测不到出口时如实清空 egress（agent+引擎双侧，保留旧值会误导匹配——实测踩坑：用户调整 201 策略路由未放通公网期间旧值残留）。
+**零接触开通（2026-11-06）**：internal/server/provision.go——「探针管理→＋新建探针」弹窗输入全新服务器 IP/账号/密码（一次），后台异步任务（内存态 provJobs，POST /probes/provision 秒回 job_id、GET /probes/provision/{id} 轮询）：SSH 免密（NW_SSH_PUBKEY_FILE=/opt/netwatch/.ssh-center.pub）→ 主机名 probe-<尾段> → 二进制上传（**sha256 校验**）→ systemd → 等注册（源 IP 匹配，≤60s）→ 等出口 IP（引擎快照，≤90s）→ 出口 IP 匹配 lines.public_ip 绑定（无匹配自动建线=运营商-出口IP，按楼层 CIDR 归属楼层）。**坑：agentBinaryPath 取 server 同目录（/opt/netwatch/bin）——发布时 netwatch-agent 也要同步更新到该目录，仓库 bin/ 不等于部署 bin/**（本次实测踩坑：误判为二进制损坏排查半天）。10.8.14.202 实测 20s 全通过（含后台 SSH 运维双通道）。**2026-11-06 拓扑澄清（用户明确）**：全部探针位于 10.8.14.0/23 管理网段，防火墙按源 IP 策略路由给每台探针分配各自出口线路——**出口 IP ↔ 线路 ↔ 楼层是唯一识别链**；按探针源 IP/楼层 CIDR 猜楼层的逻辑已删除（该拓扑下必然错），楼层只随线路；开通弹窗支持"预期线路"可选校验（实际出口不符→当场告警，装机时发现策略路由配错），同线路已有探针也会提示。**立即刷新按钮（2026-11-06）**：探针无入站端口，刷新指令走心跳应答夹带——POST /probes/refresh（空=全部）→ Engine.refreshSet → 心跳应答 refresh_egress:true → agent 立即重探出口三件套并马上回报（实测 7s 到达），探针日志留痕 "egress refresh requested"；状态页/管理页均有 🔄 立即刷新按钮（点击后 30s 内 3s 快速轮询）。**12 线路正式拓扑落地（2026-11-06，用户两表汇总确认）**：12 探针(1:1)12 线路(1:多)楼层段——
+联通专线线路100M(机房)、联通线路1=1-3楼+8楼-1(10.8.30.0/25)+10楼、线路2=4楼、3=5楼、4=6楼、5=7楼、
+6/8暂未分配、7=9楼、9=104号院38+39段、10=wifi34+35段(实际10.8.34.0/23按/24拆扫)、11=8楼-2(/25)；
+楼层实体 13 个（8楼拆两半、wifi/104 按段拆），管理网段(10.8.14.0/23)保留不挂线。
+**线路↔楼层多对多（2026-11-06）**：line_floors 关联表替代 lines.floor_id 单值；LineRow.Floors[]/floor_ids 入参/
+FloorName 聚合展示（"1-3楼、8楼-1、10楼"），线路弹窗楼层复选。**未绑定探针自动匹配**：出口 IP 命中某线路
+public_ip 即自动绑定+审计 auto-bind（egress-identity 闭环——探针上线/改路由自动归位；未命中不建线）。
+**开通预期线路增强**：预期线路出口为空时，探到的出口直接登记为该线路身份并绑定（不另建重复线）。
+**收敛冲突（用户并行操作）**：用户手工建的"联通-2/3号线"（带真实出口+绑定）改名并入规划命名，空壳线删除。
+注意：probe-12(202) 被用户改路由到 4楼线，专线(218.28.242.106) 现无探针；probe 命名与表1 有出入（probe-201/12/203）以现场为准。
+**出口变更自愈（2026-11-06）**：心跳对账升级为 egress-identity 语义——绑定线路 IP 为空=首次登记回填；出口与绑定线路不符=自动改绑到出口对应线路（无匹配自动建线，审计 egress-rebind），**绝不回写原线路 public_ip**（防污染线路身份）；探针探测不到出口时如实清空 egress（agent+引擎双侧，保留旧值会误导匹配——实测踩坑：用户调整 201 策略路由未放通公网期间旧值残留）。
 
 **剩余现场实施事项**：
 1. 12 台楼层探针 VM（`deploy/install-agent.sh` 单台 / `batch-install-probes.sh` 批量，**先绑定线路再启用**）；已在 10.8.14.201 真实麒麟主机全流程实测通过；
@@ -104,7 +114,7 @@ make dist         # 交付包 dist/netwatch-0.2.tar.gz
 
 ## 6. 数据模型与指标速查
 
-**PG 表**：floors / lines（public_ip 由探针自动探测回填：探针每 5min 访问 IP 回显服务、随心跳上报、中心对账纠偏，手工值仅作探测全挂时兜底）/ probes（含 name、grp、ssh_*、pending_version）/ alerts / silences / reports / audit / agent_releases / users / settings。
+**PG 表**：floors / line_floors（线路↔楼层多对多）/ lines（public_ip 由探针自动探测回填：探针每 5min 访问 IP 回显服务、随心跳上报、中心对账纠偏，手工值仅作探测全挂时兜底）/ probes（含 name、grp、ssh_*、pending_version）/ alerts / silences / reports / audit / agent_releases / users / settings。
 **settings 键**：agent_config（内网组探测配置）、agent_config_external（外网组）、internal_monitors、industry_monitors（行业网监测，仅 ICMP）（内→内内置监控）、smtp、alert_settings、speed_settings、report_settings、notify_channels、snmp_settings、agent.enroll_token。
 **VM 指标**：nw_ping_{rtt_ms,ok,loss_pct}{class=gw|public}、nw_tcp_*、nw_dns_*、nw_http_{ttfb_ms,ok,code,cert_days}、nw_speed_{down,up}_mbps、nw_snmp_{in,out}_bps{line}、nw_monitor_{ok,rtt_ms}{monitor,type}（内→内）。标签：probe/line/target/monitor。、nw_industry_{ok,rtt_ms}{industry}（行业网监测，中心仅 ICMP）
 **协议新增（2026-11-06）**：Heartbeat.PublicIP/IPISP/IPGeo/IPv6/CPUPct/MemPct/DiskPct/AgentTS/SysInfo、ProbeConfig.IPEchoURLs（回显服务池，空=探针内置默认 ip.3322.net/members.3322.org/v4.ident.me/myip.ipip.net）——只增字段，新旧兼容。线路出口属性（public_ip/isp/geo）全部探针自动探测对账回填（手工值仅回显全挂时兜底；lines 手工更新对这三个字段空值不覆盖）；probes.sysinfo JSONB 存资产（心跳补报，不重注册也能刷新）；P2 probe_resource=探针内存/磁盘>90% 连续 3 心跳。证伪：DNS 出口 IP 检测不可用（公共递归返回自身出口 123.6.27.94≠线路出口）。

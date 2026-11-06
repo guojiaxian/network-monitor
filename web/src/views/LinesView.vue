@@ -74,11 +74,14 @@
       <div class="row g-2">
         <div class="col-md-6"><label class="form-label small mb-1">线路名 <span class="text-danger">*</span></label>
           <input v-model="lModal.name" class="form-control form-control-sm" placeholder="如 联通3号线" /></div>
-        <div class="col-md-6"><label class="form-label small mb-1">关联楼层</label>
-          <select v-model.number="lModal.floor_id" class="form-select form-select-sm">
-            <option :value="undefined">未关联</option>
-            <option v-for="f in floors" :key="f.id" :value="f.id">{{ f.name }}</option>
-          </select></div>
+        <div class="col-12"><label class="form-label small mb-1">关联楼层（可多选，对应"分配情况"）</label>
+          <div class="d-flex flex-wrap gap-2 border rounded p-2">
+            <span v-if="!floors.length" class="text-secondary small">暂无楼层</span>
+            <div class="form-check mb-0" v-for="f in floors" :key="f.id">
+              <input type="checkbox" :id="'lf'+f.id" :value="f.id" v-model="lModal.floor_ids" class="form-check-input" />
+              <label :for="'lf'+f.id" class="form-check-label small">{{ f.name }} <code class="text-secondary" v-if="f.cidr">{{ f.cidr }}</code></label>
+            </div>
+          </div></div>
         <div class="col-md-4"><label class="form-label small mb-1">下行契约 Mbps</label>
           <input v-model.number="lModal.contract_down_mbps" type="number" class="form-control form-control-sm" placeholder="如 1000" /></div>
         <div class="col-md-4"><label class="form-label small mb-1">上行契约 Mbps</label>
@@ -104,7 +107,7 @@ const csv = ref(''), importMsg = ref(''), importOk = ref(false)
 const speeding = ref(0), speedMsg = ref('')
 const fModal = reactive({ show: false, id: 0, name: '', cidr: '', err: '' })
 const lModal = reactive({ show: false, id: 0, name: '', public_ip: '', contract_down_mbps: undefined,
-  contract_up_mbps: undefined, floor_id: undefined, isp: '', err: '' })
+  contract_up_mbps: undefined, floor_ids: [], isp: '', err: '' })
 
 async function speedNow(l) {
   speedMsg.value = ''
@@ -148,7 +151,7 @@ function openLine(l) {
     name: l ? l.name : '', public_ip: l ? l.public_ip : '',
     contract_down_mbps: l ? l.contract_down_mbps || undefined : undefined,
     contract_up_mbps: l ? l.contract_up_mbps || undefined : undefined,
-    floor_id: l && l.floor_id ? l.floor_id : undefined,
+    floor_ids: l ? (l.floors || []).map(f => f.id) : [],
     isp: l ? l.isp : '', err: '',
   })
 }
@@ -160,7 +163,7 @@ async function saveLine() {
       id: lModal.id || undefined, name: lModal.name.trim(),
       public_ip: lModal.public_ip.trim(), isp: lModal.isp.trim(),
       contract_down_mbps: lModal.contract_down_mbps || 0, contract_up_mbps: lModal.contract_up_mbps || 0,
-      floor_id: lModal.floor_id || undefined,
+      floor_ids: lModal.floor_ids,
     })
     lModal.show = false
     await load()

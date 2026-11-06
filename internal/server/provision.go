@@ -276,6 +276,19 @@ systemctl daemon-reload && systemctl enable --now netwatch-agent`, unit)
 			break
 		}
 	}
+	if lineID == 0 && job.ExpectedLineID != 0 {
+		// 预期线路存在且出口 IP 尚未登记：把探测到的出口登记为该线路身份并绑定
+		// （12 台逐一开通的主路径——管理员指定预期线路，开通即完成线路出口登记）
+		for _, l := range lines {
+			if l.ID == job.ExpectedLineID && l.PublicIP == "" {
+				if err := a.store.UpdateLineEgressInfo(ctx, l.ID, job.EgressIP, eg.EgressISP, eg.EgressGeo); err == nil {
+					lineID, lineName = l.ID, l.Name
+					job.step("✓ 出口 IP %s 首次登记到预期线路「%s」", job.EgressIP, l.Name)
+				}
+				break
+			}
+		}
+	}
 	if lineID == 0 {
 		// 自动创建：名称=运营商-出口IP。楼层不在此猜测——探针全部位于管理网段
 		// （防火墙按源 IP 策略路由分配出口），楼层只能随线路（线路配置页维护）
@@ -286,11 +299,11 @@ systemctl daemon-reload && systemctl enable --now netwatch-agent`, unit)
 		}
 		newName := isp + "-" + job.EgressIP
 		lr := &LineRow{Name: newName, ISP: eg.EgressISP, PublicIP: job.EgressIP, Geo: eg.EgressGeo}
-		nid, err := a.store.UpsertLine(ctx, lr)
+		nid, err := a.store.UpsertLine(ctx, lr, nil)
 		if err != nil {
 			// 线路名冲突兜底：追加时间戳
 			lr.Name = fmt.Sprintf("%s-%d", newName, time.Now().Unix()%1000)
-			if nid, err = a.store.UpsertLine(ctx, lr); err != nil {
+			if nid, err = a.store.UpsertLine(ctx, lr, nil); err != nil {
 				fail("自动创建线路失败: %v", err)
 				return
 			}

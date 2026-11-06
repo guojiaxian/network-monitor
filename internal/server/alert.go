@@ -410,10 +410,38 @@ func (e *Engine) OnHeartbeat(agentID string, hb proto.Heartbeat) {
 		return
 	}
 	lm, ok := m[agentID]
-	if !ok || !lm.Bound {
+	if !ok {
 		return
 	}
 	disp := probeDisplay(agentID, lm)
+
+	if !lm.Bound {
+		// 未绑定探针：出口 IP 命中某条线路的身份（public_ip 一致）即自动绑定
+		// （egress-identity 闭环——探针上线/策略路由调整后自动归位；
+		//   未命中不动作不建线，自动建线只发生在零接触开通流程）
+		if hb.PublicIP == "" || lm.Group == "external" {
+			return
+		}
+		target, err := e.store.FindLineByPublicIP(ctx, hb.PublicIP)
+		if err != nil || target == 0 {
+			return
+		}
+		if err := e.store.AssignProbeLine(ctx, agentID, &target); err == nil {
+			lname := ""
+			if lines, lerr := e.store.ListLines(ctx); lerr == nil {
+				for _, l := range lines {
+					if l.ID == target {
+						lname = l.Name
+					}
+				}
+			}
+			e.log.Printf("探针 %s 自动匹配绑定线路「%s」（出口 IP %s 一致；如非预期请检查该探针的策略路由）",
+				disp, lname, hb.PublicIP)
+			e.store.WriteAudit(ctx, "system", "auto-bind:"+disp,
+				fmt.Sprintf("egress=%s line=%d", hb.PublicIP, target))
+		}
+		return
+	}
 
 	if lm.PublicIP == "" {
 		// 线路身份未登记：首次接线，回填
@@ -469,10 +497,10 @@ func (e *Engine) ensureLineForEgress(ctx context.Context, ip, isp, geo string) (
 		isp = "线路"
 	}
 	lr := &LineRow{Name: isp + "-" + ip, ISP: isp, PublicIP: ip, Geo: geo}
-	id, err := e.store.UpsertLine(ctx, lr)
+	id, err := e.store.UpsertLine(ctx, lr, nil)
 	if err != nil {
 		lr.Name = fmt.Sprintf("%s-%d", lr.Name, time.Now().Unix()%1000)
-		id, err = e.store.UpsertLine(ctx, lr)
+		id, err = e.store.UpsertLine(ctx, lr, nil)
 	}
 	return id, lr.Name, err
 }

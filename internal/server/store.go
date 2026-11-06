@@ -151,7 +151,15 @@ ALTER TABLE probes ADD COLUMN IF NOT EXISTS ssh_user TEXT NOT NULL DEFAULT 'root
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS ssh_pass_enc TEXT NOT NULL DEFAULT '';
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS grp TEXT NOT NULL DEFAULT 'internal';
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS sysinfo JSONB NOT NULL DEFAULT '{}';
-ALTER TABLE lines ADD COLUMN IF NOT EXISTS geo TEXT NOT NULL DEFAULT '';`)
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS geo TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS line_floors (
+  line_id  INT NOT NULL REFERENCES lines(id) ON DELETE CASCADE,
+  floor_id INT NOT NULL REFERENCES floors(id) ON DELETE CASCADE,
+  PRIMARY KEY (line_id, floor_id)
+);
+INSERT INTO line_floors(line_id, floor_id)
+SELECT id, floor_id FROM lines WHERE floor_id IS NOT NULL
+ON CONFLICT DO NOTHING;`)
 	return err
 }
 
@@ -854,12 +862,14 @@ type LineMeta struct {
 
 func (s *Store) ProbeLineMeta(ctx context.Context) (map[string]LineMeta, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT p.id, COALESCE(l.id,0), COALESCE(l.name,''), COALESCE(f.name,''),
-       COALESCE(l.public_ip,''), COALESCE(l.isp,''), COALESCE(l.geo,''), COALESCE(f.cidr,''), COALESCE(l.contract_down_mbps,0),
+SELECT p.id, COALESCE(l.id,0), COALESCE(l.name,''),
+       COALESCE((SELECT string_agg(f.name, '、') FROM line_floors lf JOIN floors f ON f.id=lf.floor_id WHERE lf.line_id=l.id), ''),
+       COALESCE(l.public_ip,''), COALESCE(l.isp,''), COALESCE(l.geo,''),
+       COALESCE((SELECT string_agg(f.cidr, ',') FROM line_floors lf JOIN floors f ON f.id=lf.floor_id WHERE lf.line_id=l.id), ''),
+       COALESCE(l.contract_down_mbps,0),
        COALESCE(p.grp,'internal'), COALESCE(p.name,''), COALESCE(p.hostname,'')
 FROM probes p
-LEFT JOIN lines l ON p.line_id = l.id
-LEFT JOIN floors f ON l.floor_id = f.id`)
+LEFT JOIN lines l ON p.line_id = l.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -898,23 +908,30 @@ type FloorRow struct {
 	LineCount int    `json:"line_count"`
 }
 
+type FloorBrief struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	CIDR string `json:"cidr"`
+}
+
 type LineRow struct {
-	ID               int    `json:"id"`
-	Name             string `json:"name"`
-	ISP              string `json:"isp"`
-	PublicIP         string `json:"public_ip"`
-	Geo              string `json:"geo"`
-	ContractDownMbps int    `json:"contract_down_mbps"`
-	ContractUpMbps   int    `json:"contract_up_mbps"`
-	FloorID          *int   `json:"floor_id"`
-	FloorName        string `json:"floor_name"`
-	CIDR             string `json:"cidr"`
+	ID               int          `json:"id"`
+	Name             string       `json:"name"`
+	ISP              string       `json:"isp"`
+	PublicIP         string       `json:"public_ip"`
+	Geo              string       `json:"geo"`
+	ContractDownMbps int          `json:"contract_down_mbps"`
+	ContractUpMbps   int          `json:"contract_up_mbps"`
+	FloorIDs         []int        `json:"floor_ids"`   // 写入用：关联楼层 id 列表（UpsertLine 消费）
+	Floors           []FloorBrief `json:"floors"`      // 关联楼层（多对多）
+	FloorName        string       `json:"floor_name"`  // 聚合展示名（"1-3楼、8楼-1、10楼"）
+	CIDR             string       `json:"cidr"`        // 聚合展示（逗号分隔）
 }
 
 func (s *Store) ListFloors(ctx context.Context) ([]FloorRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT f.id, f.name, f.cidr,
-       (SELECT count(*) FROM lines l WHERE l.floor_id = f.id) AS line_count
+       (SELECT count(*) FROM line_floors lf WHERE lf.floor_id = f.id) AS line_count
 FROM floors f ORDER BY f.id`)
 	if err != nil {
 		return nil, err
@@ -1003,9 +1020,9 @@ func (s *Store) DeleteFloor(ctx context.Context, id int) error {
 func (s *Store) ListLines(ctx context.Context) ([]LineRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT l.id, l.name, l.isp, l.public_ip, COALESCE(l.geo,''), l.contract_down_mbps, l.contract_up_mbps,
-       l.floor_id, COALESCE(f.name,''), COALESCE(f.cidr,'')
-FROM lines l LEFT JOIN floors f ON l.floor_id = f.id
-ORDER BY l.id`)
+  COALESCE((SELECT json_agg(json_build_object('id',f.id,'name',f.name,'cidr',f.cidr) ORDER BY f.id)
+            FROM line_floors lf JOIN floors f ON f.id = lf.floor_id WHERE lf.line_id = l.id), '[]'::json)
+FROM lines l ORDER BY l.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,16 +1030,28 @@ ORDER BY l.id`)
 	out := []LineRow{}
 	for rows.Next() {
 		var r LineRow
+		var floorsJSON []byte
 		if err := rows.Scan(&r.ID, &r.Name, &r.ISP, &r.PublicIP, &r.Geo, &r.ContractDownMbps,
-			&r.ContractUpMbps, &r.FloorID, &r.FloorName, &r.CIDR); err != nil {
+			&r.ContractUpMbps, &floorsJSON); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(floorsJSON, &r.Floors)
+		names, cidrs := make([]string, 0, len(r.Floors)), make([]string, 0, len(r.Floors))
+		for _, f := range r.Floors {
+			names = append(names, f.Name)
+			if f.CIDR != "" {
+				cidrs = append(cidrs, f.CIDR)
+			}
+		}
+		r.FloorName = strings.Join(names, "、")
+		r.CIDR = strings.Join(cidrs, ", ")
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) UpsertLine(ctx context.Context, l *LineRow) (int, error) {
+// UpsertLine 新增/更新线路。floorIDs 为关联楼层（多对多，空切片=清空关联）。
+func (s *Store) UpsertLine(ctx context.Context, l *LineRow, floorIDs []int) (int, error) {
 	// 线路名唯一：重名会让"按线路"的曲线/历史/告警统计互相混叠
 	var dup int
 	q := `SELECT count(*) FROM lines WHERE name=$1`
@@ -1034,24 +1063,41 @@ func (s *Store) UpsertLine(ctx context.Context, l *LineRow) (int, error) {
 	if err := s.pool.QueryRow(ctx, q, args...).Scan(&dup); err == nil && dup > 0 {
 		return 0, fmt.Errorf("线路名 %q 已存在", l.Name)
 	}
+	var nid int
 	if l.ID != 0 {
 		// 自动探测字段（isp/public_ip/geo）空值=不覆盖：管理员改其他字段时
 		// 不会把探针自动回填的出口信息误清空
-		_, err := s.pool.Exec(ctx, `
+		if _, err := s.pool.Exec(ctx, `
 UPDATE lines SET name=$2,
                  isp=CASE WHEN $3<>'' THEN $3 ELSE isp END,
                  public_ip=CASE WHEN $4<>'' THEN $4 ELSE public_ip END,
-                 geo=CASE WHEN $8<>'' THEN $8 ELSE geo END,
-                 contract_down_mbps=$5, contract_up_mbps=$6, floor_id=$7 WHERE id=$1`,
-			l.ID, l.Name, l.ISP, l.PublicIP, l.ContractDownMbps, l.ContractUpMbps, l.FloorID, l.Geo)
-		return l.ID, err
+                 geo=CASE WHEN $5<>'' THEN $5 ELSE geo END,
+                 contract_down_mbps=$6, contract_up_mbps=$7 WHERE id=$1`,
+			l.ID, l.Name, l.ISP, l.PublicIP, l.Geo, l.ContractDownMbps, l.ContractUpMbps); err != nil {
+			return 0, err
+		}
+		nid = l.ID
+	} else {
+		err := s.pool.QueryRow(ctx, `
+INSERT INTO lines(name, isp, public_ip, geo, contract_down_mbps, contract_up_mbps)
+VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+			l.Name, l.ISP, l.PublicIP, l.Geo, l.ContractDownMbps, l.ContractUpMbps).Scan(&nid)
+		if err != nil {
+			return 0, err
+		}
 	}
-	var nid int
-	err := s.pool.QueryRow(ctx, `
-INSERT INTO lines(name, isp, public_ip, geo, contract_down_mbps, contract_up_mbps, floor_id)
-VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		l.Name, l.ISP, l.PublicIP, l.Geo, l.ContractDownMbps, l.ContractUpMbps, l.FloorID).Scan(&nid)
-	return nid, err
+	// 楼层关联多对多：整体替换（校验楼层存在，忽略非法 id）
+	if _, err := s.pool.Exec(ctx, `DELETE FROM line_floors WHERE line_id=$1`, nid); err != nil {
+		return 0, err
+	}
+	for _, fid := range floorIDs {
+		if _, err := s.pool.Exec(ctx, `
+INSERT INTO line_floors(line_id, floor_id) SELECT $1, f.id FROM floors f WHERE f.id=$2
+ON CONFLICT DO NOTHING`, nid, fid); err != nil {
+			return 0, err
+		}
+	}
+	return nid, nil
 }
 
 func (s *Store) DeleteLine(ctx context.Context, id int) error {

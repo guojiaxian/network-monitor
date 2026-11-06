@@ -516,7 +516,7 @@ func (a *AdminAPI) upsertLine(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, "线路名含非法字符（禁止 \" \\ 反引号，且不能为空白）")
 		return
 	}
-	nid, err := a.store.UpsertLine(r.Context(), &l)
+	nid, err := a.store.UpsertLine(r.Context(), &l, l.FloorIDs)
 	if err != nil {
 		if strings.Contains(err.Error(), "已存在") {
 			httpError(w, 400, err.Error())
@@ -593,8 +593,8 @@ func (a *AdminAPI) importLinesCSV(w http.ResponseWriter, r *http.Request) {
 			floorByName[floorName] = nid
 		}
 		l := LineRow{Name: lineName, ISP: "联通", PublicIP: publicIP,
-			ContractDownMbps: down, ContractUpMbps: up, FloorID: &fid}
-		if _, err := a.store.UpsertLine(r.Context(), &l); err != nil {
+			ContractDownMbps: down, ContractUpMbps: up}
+		if _, err := a.store.UpsertLine(r.Context(), &l, []int{fid}); err != nil {
 			skipped = append(skipped, lineName+"（"+err.Error()+"）")
 			continue
 		}
