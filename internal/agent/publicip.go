@@ -58,6 +58,7 @@ func (a *Agent) refreshEgress(ctx context.Context) {
 	if len(urls) == 0 {
 		urls = defaultIPEchoURLs
 	}
+	got := false
 	for _, u := range urls {
 		if ip := fetchIPv4(ctx, u); ip != "" {
 			if ip != a.egressIPOf() {
@@ -66,8 +67,19 @@ func (a *Agent) refreshEgress(ctx context.Context) {
 			a.ipMu.Lock()
 			a.egressIP = ip
 			a.ipMu.Unlock()
+			got = true
 			break
 		}
+	}
+	if !got {
+		// 全部回显服务失败：如实清空（策略路由调整/线路中断期间旧出口值
+		// 属过期信息，继续上报会误导 egress-identity 匹配；2026-11-06 实测踩坑）
+		if a.egressIPOf() != "" {
+			a.log.Printf("egress public ip: 全部回显服务失败，清空缓存值（出网可能中断）")
+		}
+		a.ipMu.Lock()
+		a.egressIP = ""
+		a.ipMu.Unlock()
 	}
 	a.refreshGeo(ctx)
 	a.refreshIPv6(ctx)

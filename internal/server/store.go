@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"netwatch/internal/proto"
@@ -143,6 +144,16 @@ ALTER TABLE probes ADD COLUMN IF NOT EXISTS grp TEXT NOT NULL DEFAULT 'internal'
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS sysinfo JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS geo TEXT NOT NULL DEFAULT '';`)
 	return err
+}
+
+// FindLineByPublicIP 按出口公网 IP 查线路（egress-identity 拓扑下探针改绑的匹配依据）
+func (s *Store) FindLineByPublicIP(ctx context.Context, ip string) (int, error) {
+	var id int
+	err := s.pool.QueryRow(ctx, `SELECT id FROM lines WHERE public_ip=$1 ORDER BY id LIMIT 1`, ip).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }
 
 // UpdateLineEgressInfo 线路出口属性自动回填（探针心跳探测）：公网 IP/运营商/归属地。

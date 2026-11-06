@@ -377,15 +377,19 @@ func (e *Engine) OnHeartbeat(agentID string, hb proto.Heartbeat) {
 	}
 	agg.cpuPct, agg.memPct, agg.diskPct = hb.CPUPct, hb.MemPct, hb.DiskPct
 
-	// 出口信息对账回填：公网 IP / 运营商 / 归属地 均由探针自动探测，
-	// 与库值不一致（含手工改写）即纠正——"线路出口属性由探针自动探测"语义
+	// 出口信息对账（egress-identity 拓扑：出口 IP ↔ 线路 ↔ 楼层是唯一识别链）：
+	// - 绑定线路未登记出口 IP（新建线）→ 用探针探测值回填（首次接线即完成线路身份登记）
+	// - 绑定线路出口与实际出口一致 → 仅对账运营商/归属地元数据
+	// - 不一致 → 探针已随策略路由变更/接线调整落到别的出口：自动改绑到出口对应的
+	//   线路（无匹配则自动建线），**绝不把原线路的 public_ip 改写成新出口**（那会
+	//   污染线路身份——2026-11-06 用户调整 201 策略路由时暴露的语义缺陷）
 	needMeta := hb.PublicIP != "" || hb.IPISP != "" || hb.IPGeo != ""
 	if !needMeta {
 		return
 	}
-	if hb.PublicIP != "" {
-		agg.egressIP = hb.PublicIP
-	}
+	// PublicIP 空值=探测不到出口（出网中断/回显全挂）：如实清空，与 ipV6 同语义——
+	// 保留旧值会让 egress-identity 匹配基于过期信息（实测踩坑）
+	agg.egressIP = hb.PublicIP
 	if hb.IPISP != "" {
 		agg.ipISP = hb.IPISP
 	}
@@ -405,20 +409,68 @@ func (e *Engine) OnHeartbeat(agentID string, hb proto.Heartbeat) {
 	if !ok || !lm.Bound {
 		return
 	}
-	if (hb.PublicIP != "" && lm.PublicIP != hb.PublicIP) ||
-		(hb.IPISP != "" && lm.ISP != hb.IPISP) ||
-		(hb.IPGeo != "" && lm.Geo != hb.IPGeo) {
-		if err := e.store.UpdateLineEgressInfo(ctx, lm.LineID, hb.PublicIP, hb.IPISP, hb.IPGeo); err == nil {
-			if hb.PublicIP != "" && lm.PublicIP != hb.PublicIP {
-				e.log.Printf("线路 %s 出口公网 IP 自动探测: %s → %s (探针 %s)",
-					lm.LineName, lm.PublicIP, hb.PublicIP, probeDisplay(agentID, lm))
-			}
-			if hb.IPISP != "" && lm.ISP != hb.IPISP {
-				e.log.Printf("线路 %s 运营商自动探测: %s → %s (归属地 %s)",
-					lm.LineName, lm.ISP, hb.IPISP, hb.IPGeo)
-			}
+	disp := probeDisplay(agentID, lm)
+
+	if lm.PublicIP == "" {
+		// 线路身份未登记：首次接线，回填
+		if hb.PublicIP == "" {
+			return
 		}
+		if err := e.store.UpdateLineEgressInfo(ctx, lm.LineID, hb.PublicIP, hb.IPISP, hb.IPGeo); err == nil {
+			e.log.Printf("线路 %s 出口公网 IP 首次登记: %s (%s %s) (探针 %s)",
+				lm.LineName, hb.PublicIP, hb.IPISP, hb.IPGeo, disp)
+		}
+		return
 	}
+	if hb.PublicIP != "" && lm.PublicIP != hb.PublicIP {
+		// 出口与绑定线路身份不符：改绑到出口对应的线路
+		target, err := e.store.FindLineByPublicIP(ctx, hb.PublicIP)
+		if err != nil {
+			return
+		}
+		created := false
+		newName := ""
+		if target == 0 {
+			target, newName, err = e.ensureLineForEgress(ctx, hb.PublicIP, hb.IPISP, hb.IPGeo)
+			if err != nil {
+				e.log.Printf("egress 改绑建线失败: %v", err)
+				return
+			}
+			created = true
+		}
+		if target == lm.LineID {
+			return
+		}
+		if err := e.store.AssignProbeLine(ctx, agentID, &target); err == nil {
+			kind := "线路"
+			if created {
+				kind = "自动新建线路"
+			}
+			e.log.Printf("探针 %s 出口 IP 变更 %s → %s：已自动改绑 %s「%s」→「%s」（策略路由变更或接线调整；如非预期请检查防火墙）",
+				disp, lm.PublicIP, hb.PublicIP, kind, lm.LineName, newName)
+			e.store.WriteAudit(ctx, "system", "egress-rebind:"+disp,
+				fmt.Sprintf("%s→%s line:%d→%d", lm.PublicIP, hb.PublicIP, lm.LineID, target))
+		}
+		return
+	}
+	// 出口一致：仅对账元数据（IP 是线路身份，不回写）
+	if (hb.IPISP != "" && lm.ISP != hb.IPISP) || (hb.IPGeo != "" && lm.Geo != hb.IPGeo) {
+		_ = e.store.UpdateLineEgressInfo(ctx, lm.LineID, "", hb.IPISP, hb.IPGeo)
+	}
+}
+
+// ensureLineForEgress 出口 IP 无匹配线路时自动建线（名称=运营商-出口IP）
+func (e *Engine) ensureLineForEgress(ctx context.Context, ip, isp, geo string) (int, string, error) {
+	if isp == "" {
+		isp = "线路"
+	}
+	lr := &LineRow{Name: isp + "-" + ip, ISP: isp, PublicIP: ip, Geo: geo}
+	id, err := e.store.UpsertLine(ctx, lr)
+	if err != nil {
+		lr.Name = fmt.Sprintf("%s-%d", lr.Name, time.Now().Unix()%1000)
+		id, err = e.store.UpsertLine(ctx, lr)
+	}
+	return id, lr.Name, err
 }
 
 func (e *Engine) aggFor(id string) *probeAgg {
