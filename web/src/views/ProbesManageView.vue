@@ -8,10 +8,13 @@
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
         <h6 class="mb-0">探针列表</h6>
-        <button class="btn btn-sm btn-outline-primary me-2" :disabled="refreshing" @click="refreshNow">
-          {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
-        </button>
-        <button class="btn btn-sm btn-primary" @click="openProvision()">＋ 新建探针</button>
+        <!-- 动作按钮推到右侧并互留间距，与其他页面"标题左、动作右"的布局一致 -->
+        <div class="ms-auto d-flex gap-2">
+          <button class="btn btn-sm btn-outline-primary" :disabled="refreshing" @click="refreshNow">
+            {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
+          </button>
+          <button class="btn btn-sm btn-primary" @click="openProvision()">＋ 新建探针</button>
+        </div>
       </div>
       <table class="table nw-table table-sm align-middle">
         <thead>
