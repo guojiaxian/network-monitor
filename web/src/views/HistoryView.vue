@@ -78,42 +78,7 @@
       </div>
       <canvas id="stripCanvas" style="width:100%;height:1px"></canvas>
       <div v-if="!strips.length" class="text-secondary small text-center py-2">暂无数据</div>
-    </div>
-
-    <div class="nw-card">
-      <div class="d-flex align-items-center mb-2">
-        <h6 class="mb-0">明细表（{{ records.length }} 条，按时间倒序）</h6>
-        <button class="btn btn-sm btn-outline-secondary ms-auto" @click="showTable = !showTable">{{ showTable ? '收起' : '展开' }}</button>
-      </div>
-      <div v-show="showTable" style="max-height:480px;overflow:auto">
-        <table class="table nw-table table-sm table-hover align-middle mb-0">
-          <thead>
-            <tr>
-              <th style="width:170px">时间</th>
-              <th>目标</th>
-              <th v-if="f.type === 'ping'" style="width:90px">类别</th>
-              <th style="width:110px">结果</th>
-              <th style="width:120px">时延/耗时</th>
-              <th v-if="f.type === 'http'" style="width:100px">状态码</th>
-              <th v-if="f.type === 'http'" style="width:130px">证书剩余</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(r, i) in records" :key="i">
-              <td class="small text-secondary">{{ fmt(r.ts_ms) }}</td>
-              <td><code class="small">{{ r.target }}</code></td>
-              <td v-if="f.type === 'ping'" class="small">{{ r.class === 'gw' ? '网关' : '公网' }}</td>
-              <td>
-                <span class="badge" :class="r.ok ? 'bg-success' : 'bg-danger'">{{ r.ok ? '成功' : '失败' }}</span>
-              </td>
-              <td class="small">{{ r.rtt_ms ? r.rtt_ms.toFixed(2) + ' ms' : '—' }}</td>
-              <td v-if="f.type === 'http'" class="small">{{ r.code || '—' }}</td>
-              <td v-if="f.type === 'http'" class="small" :style="{ color: certColor(r.cert_days) }">{{ certText(r.cert_days) }}</td>
-            </tr>
-            <tr v-if="!records.length && !err"><td :colspan="tableCols" class="text-secondary text-center py-4">该条件下暂无探测记录</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <div class="text-secondary small mt-2">需要逐条明细请点击右上角"导出 CSV"（与本页同一查询条件，含时间/目标/结果/时延等全列）。</div>
     </div>
   </div>
 </template>
@@ -125,16 +90,12 @@ import Chart from 'chart.js/auto'
 import { api } from '../api'
 
 const records = ref([]), targets = ref([]), err = ref('')
-const rttChartEmpty = ref(false), showTable = ref(true), truncated = ref(false)
+const rttChartEmpty = ref(false), truncated = ref(false)
 const f = ref({ probe: '', type: 'ping', target: '', range: '1800', limit: 2000 })
 const probeOptions = ref([])
 let rttChart = null
 let lastWindow = { start: 0, end: 0 }
 
-const fmt = (ts) => dayjs(ts).format('YYYY-MM-DD HH:mm:ss')
-const certText = (d) => !d ? '—' : Math.round(d) + ' 天'
-const certColor = (d) => (!d ? '#999' : d < 15 ? '#dc3545' : d < 30 ? '#ffc107' : '#05c96b')
-const tableCols = computed(() => f.value.type === 'ping' ? 6 : (f.value.type === 'http' ? 7 : 5))
 
 // strips: [{name, segs:[{x0,x1,ok}]}]
 const strips = ref([])
@@ -233,9 +194,18 @@ function drawRtt() {
     const rows = stripRows()
     tName = rows.length ? rows[0].name : ''
   }
-  const recs = [...records.value].filter(r => r.target === tName).reverse()
+  let recs = [...records.value].filter(r => r.target === tName).reverse()
   rttChartEmpty.value = recs.length === 0
   if (rttChartEmpty.value || !cv) return
+  // 抽稀：等距降采样到 ≤1200 点，保留失败标记点不被丢（canvas/表格卡死的主因是 DOM，
+  // Chart.js 本身扛得住大点数，但 2 万点的 tooltip 交互也会卡，统一降采样）
+  const MAXPTS = 1200
+  if (recs.length > MAXPTS) {
+    const step = recs.length / MAXPTS
+    const slim = []
+    for (let i = 0; i < MAXPTS; i++) slim.push(recs[Math.floor(i * step)])
+    recs = slim
+  }
 
   const labels = recs.map(r => dayjs(r.ts_ms).format('HH:mm:ss'))
   const okData = recs.map(r => (r.ok && r.rtt_ms) ? r.rtt_ms : null)
