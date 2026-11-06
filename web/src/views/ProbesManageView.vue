@@ -98,7 +98,13 @@
             <input v-model="pJob.form.ssh_pass" type="password" class="form-control form-control-sm" autocomplete="new-password" :disabled="pJob.running" /></div>
           <div class="col-md-6"><label class="form-label small mb-1">探针名称（可选）</label>
             <input v-model="pJob.form.name" class="form-control form-control-sm" placeholder="留空=probe-IP尾段" :disabled="pJob.running" /></div>
+          <div class="col-md-6"><label class="form-label small mb-1">预期线路（可选，用于校验策略路由接线）</label>
+            <select v-model.number="pJob.form.expected_line_id" class="form-select form-select-sm" :disabled="pJob.running">
+              <option :value="0">不指定</option>
+              <option v-for="l in lines" :key="l.id" :value="l.id">{{ l.name }}（{{ l.public_ip || '出口未探得' }}）</option>
+            </select></div>
         </div>
+        <p class="text-secondary small mb-0 mt-1">开通后按探针实际出口公网 IP 匹配线路（出口 IP ↔ 线路 ↔ 楼层）；指定预期线路后若实际出口不符将明确告警，可在装机当场发现策略路由配错。</p>
         <div v-if="pJob.err" class="text-danger small mt-2">{{ pJob.err }}</div>
       </template>
       <template v-else>
@@ -107,8 +113,12 @@
         <div v-else-if="pJob.job.status === 'done'" class="text-success small mt-2">
           🎉 开通完成！探针 <code>{{ (pJob.job.probe_id || '').slice(0,8) }}</code>
           已绑定线路「{{ pJob.job.line_name }}」<span v-if="pJob.job.floor_name">（楼层：{{ pJob.job.floor_name }}）</span>
-          <span v-if="pJob.job.auto_created" class="text-warning">（该线路为自动创建，可在线路配置中调整名称/契约带宽）</span>，
+          <span v-if="pJob.job.auto_created" class="text-warning">（该线路为自动创建，可在线路配置中调整名称/契约带宽/楼层）</span>，
           出口 IP {{ pJob.job.egress_ip }}。
+        </div>
+        <div v-if="pJob.job && pJob.job.warnings && pJob.job.warnings.length" class="alert alert-warning py-2 px-3 small mt-2 mb-0">
+          <b>⚠ 需要确认：</b>
+          <ul class="mb-0 ps-3"><li v-for="w in pJob.job.warnings" :key="w">{{ w }}</li></ul>
         </div>
         <div v-else class="text-danger small mt-2">❌ {{ pJob.job.err }}</div>
       </template>
@@ -176,11 +186,11 @@ const sshCsv = ref(''), importSSHMsg = ref(''), importSSHOok = ref(false)
 const showImport = ref(false)
 const pModal = ref({ show: false })
 const pJob = reactive({ show: false, running: false, err: '', job: null, timer: null,
-  form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '' } })
+  form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '', expected_line_id: 0 } })
 
 function openProvision() {
   Object.assign(pJob, { show: true, running: false, err: '', job: null,
-    form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '' } })
+    form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '', expected_line_id: 0 } })
 }
 function closeProvision() {
   pJob.show = false
@@ -189,7 +199,7 @@ function closeProvision() {
 function resetProvision() {
   if (pJob.timer) { clearInterval(pJob.timer); pJob.timer = null }
   Object.assign(pJob, { running: false, err: '', job: null,
-    form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '' } })
+    form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '', expected_line_id: 0 } })
 }
 async function startProvision() {
   pJob.err = ''

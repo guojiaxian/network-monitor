@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,6 +40,8 @@ type ProvisionJob struct {
 	LineName    string   `json:"line_name,omitempty"`
 	FloorName   string   `json:"floor_name,omitempty"`
 	AutoCreated bool     `json:"auto_created,omitempty"`
+	ExpectedLineID int  `json:"expected_line_id,omitempty"` // 管理员预期的线路（装机时校验策略路由接线）
+	Warnings    []string `json:"warnings,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -48,8 +49,16 @@ func (j *ProvisionJob) step(format string, args ...any) {
 	j.Steps = append(j.Steps, time.Now().Format("15:04:05")+"  "+fmt.Sprintf(format, args...))
 }
 
+// warn 记录警告：进进度日志（⚠ 前缀）+ 独立警告列表（前端醒目展示）。
+// 典型场景：出口 IP 与预期线路不符=策略路由接线错误，装机当场发现。
+func (j *ProvisionJob) warn(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	j.Steps = append(j.Steps, time.Now().Format("15:04:05")+"  ⚠ "+msg)
+	j.Warnings = append(j.Warnings, msg)
+}
+
 // provisionStart 创建并异步执行开通任务
-func (a *AdminAPI) provisionStart(ip string, port int, user, pass, name string) (*ProvisionJob, error) {
+func (a *AdminAPI) provisionStart(ip string, port int, user, pass, name string, expectedLineID int) (*ProvisionJob, error) {
 	a.provMu.Lock()
 	defer a.provMu.Unlock()
 	// 同 IP 并发/重复开通防护（含已在跑的任务）
@@ -83,6 +92,7 @@ func (a *AdminAPI) provisionStart(ip string, port int, user, pass, name string) 
 		ids = ids[1:]
 	}
 
+	job.ExpectedLineID = expectedLineID
 	go a.provisionRun(job, port, user, pass)
 	return job, nil
 }
@@ -267,7 +277,8 @@ systemctl daemon-reload && systemctl enable --now netwatch-agent`, unit)
 		}
 	}
 	if lineID == 0 {
-		// 自动创建：名称=运营商-出口IP；楼层按探针源 IP 落在哪个楼层 CIDR 判定
+		// 自动创建：名称=运营商-出口IP。楼层不在此猜测——探针全部位于管理网段
+		// （防火墙按源 IP 策略路由分配出口），楼层只能随线路（线路配置页维护）
 		auto = true
 		isp := eg.EgressISP
 		if isp == "" {
@@ -275,9 +286,6 @@ systemctl daemon-reload && systemctl enable --now netwatch-agent`, unit)
 		}
 		newName := isp + "-" + job.EgressIP
 		lr := &LineRow{Name: newName, ISP: eg.EgressISP, PublicIP: job.EgressIP, Geo: eg.EgressGeo}
-		if fid := a.matchFloor(ctx, job.IP); fid != nil {
-			lr.FloorID = fid
-		}
 		nid, err := a.store.UpsertLine(ctx, lr)
 		if err != nil {
 			// 线路名冲突兜底：追加时间戳
@@ -289,14 +297,38 @@ systemctl daemon-reload && systemctl enable --now netwatch-agent`, unit)
 		}
 		lineID, lineName = nid, lr.Name
 		job.step("✓ 未匹配到已有线路，自动创建线路「%s」（出口 %s）", lineName, job.EgressIP)
+		if job.ExpectedLineID != 0 {
+			ename := a.lineNameByID(ctx, job.ExpectedLineID)
+			job.warn("实际出口未匹配到预期线路「%s」——请检查该探针的策略路由是否指向预期线路的出口", ename)
+		}
 	} else {
 		job.step("✓ 匹配到宽带线路「%s」（出口 IP 一致）", lineName)
+		if job.ExpectedLineID != 0 {
+			if job.ExpectedLineID == lineID {
+				job.step("✓ 与预期线路一致")
+			} else {
+				ename := a.lineNameByID(ctx, job.ExpectedLineID)
+				job.warn("出口 IP 与预期线路不符：预期「%s」，实际匹配「%s」——请检查该探针的策略路由是否指向预期线路的出口；若以实际出口为准则无需处理", ename, lineName)
+			}
+		}
 	}
 	if err := a.store.AssignProbeLine(ctx, probeID, &lineID); err != nil {
 		fail("绑定线路失败: %v", err)
 		return
 	}
 	job.LineID, job.LineName, job.AutoCreated = lineID, lineName, auto
+	// 同线路已有其他探针：提示（双探针交叉验证属正常；单探针/线路拓扑下出现=策略路由疑似指错）
+	if ps, err := a.store.ListProbes(ctx); err == nil {
+		var others []string
+		for _, p := range ps {
+			if p.LineID != nil && *p.LineID == lineID && p.ID != probeID {
+				others = append(others, probeDisplay(p.ID, LineMeta{ProbeName: p.Name, ProbeHostname: p.Hostname}))
+			}
+		}
+		if len(others) > 0 {
+			job.warn("线路「%s」已绑定探针 %s——同线路多探针=交叉验证（正常）；若各探针应独占一条线路，请检查策略路由", lineName, strings.Join(others, "、"))
+		}
+	}
 	// 楼层名（展示用）
 	if lines2, err := a.store.ListLines(ctx); err == nil {
 		for _, l := range lines2 {
@@ -347,26 +379,18 @@ func (a *AdminAPI) centerSelfURL() string {
 	return "http://" + net.JoinHostPort(localIP(), portOf(a.cfg.Listen))
 }
 
-// matchFloor 楼层 CIDR 包含探针源 IP 时返回楼层 ID
-func (a *AdminAPI) matchFloor(ctx context.Context, ip string) *int {
-	addr, err := netip.ParseAddr(ip)
+// lineNameByID 线路名（警告文案用；不存在返回 "未知"）
+func (a *AdminAPI) lineNameByID(ctx context.Context, lineID int) string {
+	lines, err := a.store.ListLines(ctx)
 	if err != nil {
-		return nil
+		return "未知"
 	}
-	floors, err := a.store.ListFloors(ctx)
-	if err != nil {
-		return nil
-	}
-	for _, f := range floors {
-		if f.CIDR == "" {
-			continue
-		}
-		if p, err := netip.ParsePrefix(f.CIDR); err == nil && p.Contains(addr) {
-			id := f.ID
-			return &id
+	for _, l := range lines {
+		if l.ID == lineID {
+			return l.Name
 		}
 	}
-	return nil
+	return "未知"
 }
 
 // safeHostname 名称 → 合法主机名：非 ASCII 字符替换为 -，数字开头加 probe- 前缀
@@ -474,11 +498,12 @@ func portOf(listen string) string {
 // ---------- HTTP handlers ----------
 
 type provisionReq struct {
-	IP      string `json:"ip"`
-	SshPort int    `json:"ssh_port"`
-	SshUser string `json:"ssh_user"`
-	SshPass string `json:"ssh_pass"`
-	Name    string `json:"name"`
+	IP             string `json:"ip"`
+	SshPort        int    `json:"ssh_port"`
+	SshUser        string `json:"ssh_user"`
+	SshPass        string `json:"ssh_pass"`
+	Name           string `json:"name"`
+	ExpectedLineID int    `json:"expected_line_id"` // 可选：预期线路（开通时校验策略路由接线）
 }
 
 // provisionNew POST /probes/provision：发起零接触开通（立即返回任务 ID，前端轮询进度）
@@ -503,7 +528,7 @@ func (a *AdminAPI) provisionNew(w http.ResponseWriter, r *http.Request) {
 	if req.SshUser == "" {
 		req.SshUser = "root"
 	}
-	job, err := a.provisionStart(req.IP, req.SshPort, req.SshUser, req.SshPass, strings.TrimSpace(req.Name))
+	job, err := a.provisionStart(req.IP, req.SshPort, req.SshUser, req.SshPass, strings.TrimSpace(req.Name), req.ExpectedLineID)
 	if err != nil {
 		httpError(w, 409, err.Error())
 		return
