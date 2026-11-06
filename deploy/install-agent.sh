@@ -31,9 +31,12 @@ step "1/6 基础环境检查"
 ok "root 权限"
 
 # ---------- 探针名称：设置 OS 主机名（克隆模板必做） ----------
+# 中文等非 ASCII 名称转安全形式时会被替换成 -（如"探针-201"→"201"），
+# 纯数字主机名不合规也不易辨识：开头是数字时自动加 "probe-" 前缀（→"probe-201"）。
 if [ -n "$NAME" ] && command -v hostnamectl >/dev/null; then
   CUR_HOST=$(hostname)
   SAFE=$(echo "$NAME" | LC_ALL=C sed 's/[^a-zA-Z0-9.-]/-/g; s/-\+/-/g; s/^-//; s/-$//')
+  case "$SAFE" in [0-9]*) SAFE="probe-$SAFE" ;; esac
   if [ -n "$SAFE" ] && [ "$CUR_HOST" != "$SAFE" ]; then
     hostnamectl set-hostname "$SAFE" && ok "OS 主机名已设置为: $SAFE"
     [ "$SAFE" != "$NAME" ] && warn "名称含非 ASCII 字符，OS 主机名使用 ASCII 形式 $SAFE（NetWatch 内显示名称仍为 $NAME）"
