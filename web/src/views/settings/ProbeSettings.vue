@@ -8,13 +8,27 @@
         <div class="col-md-2"><label class="form-label small mb-1">DNS 间隔(秒)</label><input v-model.number="ac.interval_dns_s" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-2"><label class="form-label small mb-1">HTTP 间隔(秒)</label><input v-model.number="ac.interval_http_s" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-2"><label class="form-label small mb-1">超时(秒)</label><input v-model.number="ac.timeout_s" type="number" class="form-control form-control-sm" /></div>
-        <div class="col-md-6"><label class="form-label small mb-1">ICMP 目标（每行一个 IP）</label><textarea v-model="icmpStr" class="form-control form-control-sm font-monospace" rows="3"></textarea></div>
-        <div class="col-md-6"><label class="form-label small mb-1">TCP 目标（每行一个 host:port）</label><textarea v-model="tcpStr" class="form-control form-control-sm font-monospace" rows="3"></textarea></div>
-        <div class="col-md-4"><label class="form-label small mb-1">DNS 服务器（每行一个）</label><textarea v-model="dnsStr" class="form-control form-control-sm font-monospace" rows="2"></textarea></div>
+      </div>
+      <div class="row g-3 mt-0">
+        <div class="col-md-6">
+          <label class="form-label small mb-1">ICMP 目标（IP）</label>
+          <target-list :items="ac.icmp_targets" add-title="新增 ICMP 目标" add-placeholder="IP，如 223.5.5.5" @add="openTarget" @remove="removeItem" />
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small mb-1">TCP 目标（host:port）</label>
+          <target-list :items="ac.tcp_targets" add-title="新增 TCP 目标" add-placeholder="host:port，如 www.qq.com:443" @add="openTarget" @remove="removeItem" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small mb-1">DNS 服务器</label>
+          <target-list :items="ac.dns_servers" add-title="新增 DNS 服务器" add-placeholder="IP，如 223.5.5.5" @add="openTarget" @remove="removeItem" />
+        </div>
         <div class="col-md-4"><label class="form-label small mb-1">解析测试域名</label><input v-model="ac.dns_domain" class="form-control form-control-sm" /></div>
-        <div class="col-md-4"><label class="form-label small mb-1">HTTP 目标（每行一个 URL）</label><textarea v-model="httpStr" class="form-control form-control-sm font-monospace" rows="2"></textarea></div>
+        <div class="col-md-4">
+          <label class="form-label small mb-1">HTTP 目标（URL）</label>
+          <target-list :items="ac.http_targets" add-title="新增 HTTP 目标" add-placeholder="URL，如 https://www.baidu.com" @add="openTarget" @remove="removeItem" />
+        </div>
         <div class="col-md-4"><label class="form-label small mb-1">注册令牌（探针接入用）</label><input v-model="enrollToken" class="form-control form-control-sm font-monospace" /></div>
-        <div class="col-md-8 text-end align-self-end">
+        <div class="col-md-8 offset-md-4 text-end align-self-end">
           <span class="text-secondary small me-2">修改后约 60 秒内下发到全部探针</span>
           <button class="btn btn-sm btn-primary" @click="saveAC">保存并下发</button>
         </div>
@@ -25,9 +39,15 @@
     <div class="nw-card mb-3">
       <h6>外网探测组（阿里云等外网服务器 · 探测单位官网）</h6>
       <p class="text-secondary small mb-2">在外网服务器上安装同一探针程序并切到"外网组"后，按此配置探测：<b>ping 官网域名 + HTTPS 访问官网</b>。全部外网探针访问失败 → P1"网站从外网不可达"；HTTPS 证书剩余 &lt;15 天 → P2 提醒。</p>
-      <div class="row g-2">
-        <div class="col-md-4"><label class="form-label small mb-1">HTTPS 目标（每行一个 URL，即官网地址）</label><textarea v-model="extHttpStr" class="form-control form-control-sm font-monospace" rows="3" placeholder="https://www.单位域名.cn"></textarea></div>
-        <div class="col-md-4"><label class="form-label small mb-1">ICMP 目标（每行一个域名或 IP）</label><textarea v-model="extIcmpStr" class="form-control form-control-sm font-monospace" rows="3" placeholder="www.单位域名.cn"></textarea></div>
+      <div class="row g-3 mt-0">
+        <div class="col-md-4">
+          <label class="form-label small mb-1">HTTPS 目标（官网 URL）</label>
+          <target-list :items="ext.http_targets" add-title="新增 HTTPS 目标（官网）" add-placeholder="https://www.单位域名.cn" @add="openTarget" @remove="removeItem" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small mb-1">ICMP 目标（域名或 IP）</label>
+          <target-list :items="ext.icmp_targets" add-title="新增外网组 ICMP 目标" add-placeholder="域名或 IP，如 www.单位域名.cn" @add="openTarget" @remove="removeItem" />
+        </div>
         <div class="col-md-2"><label class="form-label small mb-1">Ping 间隔(秒)</label><input v-model.number="ext.interval_ping_s" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-2"><label class="form-label small mb-1">HTTP 间隔(秒)</label><input v-model.number="ext.interval_http_s" type="number" class="form-control form-control-sm" /></div>
         <div class="col-md-2"><label class="form-label small mb-1">超时(秒)</label><input v-model.number="ext.timeout_s" type="number" class="form-control form-control-sm" /></div>
@@ -41,7 +61,7 @@
 
     <div class="nw-card mb-3">
       <h6>内网服务监控（内→内 · 中心服务器内置探测）</h6>
-      <p class="text-secondary small mb-2">类似 Uptime Kuma：中心服务器自己作为探针，监控内网服务（OA、业务系统、服务器、交换机）。每行一个目标：<code>名称,类型,目标,间隔秒</code>，类型为 tcp / http / icmp。连续 3 次失败触发 P2 告警。</p>
+      <p class="text-secondary small mb-2">类似 Uptime Kuma：中心服务器自己作为探针，监控内网服务（OA、业务系统、服务器、交换机）。连续 3 次失败触发 P2 告警，恢复自动解除。</p>
       <div class="d-flex align-items-center mb-2">
         <div class="form-check">
           <input id="im1" v-model="im.enabled" type="checkbox" class="form-check-input" />
@@ -49,14 +69,24 @@
         </div>
         <button class="btn btn-sm btn-primary ms-auto" @click="saveIM">保存</button>
       </div>
-      <textarea v-model="imStr" class="form-control font-monospace" rows="5"
-        placeholder="OA系统,http,http://10.8.0.20:8080/login,30&#10;核心交换机,icmp,10.8.0.1,30&#10;文件服务器,tcp,10.8.0.30:445,30"></textarea>
+      <table class="table nw-table table-sm align-middle" v-if="(im.items || []).length">
+        <thead><tr><th>名称</th><th style="width:90px">类型</th><th>目标</th><th style="width:90px">间隔(秒)</th><th style="width:60px"></th></tr></thead>
+        <tbody>
+          <tr v-for="(it, i) in im.items" :key="i">
+            <td>{{ it.name }}</td><td><span class="badge bg-secondary">{{ it.type }}</span></td>
+            <td><code>{{ it.target }}</code></td><td>{{ it.interval_s }}</td>
+            <td><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="im.items.splice(i, 1)">删除</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="text-secondary small mb-2">暂无监控目标。</p>
+      <button class="btn btn-sm btn-outline-primary" @click="openIM()">＋ 新增监控目标</button>
       <div v-if="imMsg" class="small mt-2" :class="imOk ? 'text-success' : 'text-danger'">{{ imMsg }}</div>
     </div>
 
     <div class="nw-card mb-3">
       <h6>行业网监测（中心 → 行业网 · 仅 ICMP ping）</h6>
-      <p class="text-secondary small mb-2">中心服务器对行业网指定 IP <b>仅做 ICMP ping</b>，不做 TCP/HTTP 等任何其他探测（以免被行业网封禁）。每行一个目标：<code>名称,IP,间隔秒</code>，IP 须为合法地址（如 10.5.x.x）。请确保中心服务器可路由到行业网网段。连续 3 次失败触发 P2"行业网不可达"，恢复自动解除。</p>
+      <p class="text-secondary small mb-2">中心服务器对行业网指定 IP <b>仅做 ICMP ping</b>，不做 TCP/HTTP 等任何其他探测（以免被行业网封禁）。IP 须为合法地址（如 10.5.x.x）。请确保中心服务器可路由到行业网网段。连续 3 次失败触发 P2"行业网不可达"，恢复自动解除。</p>
       <div class="d-flex align-items-center mb-2">
         <div class="form-check">
           <input id="ind1" v-model="ind.enabled" type="checkbox" class="form-check-input" />
@@ -64,39 +94,119 @@
         </div>
         <button class="btn btn-sm btn-primary ms-auto" @click="saveInd">保存</button>
       </div>
-      <textarea v-model="indStr" class="form-control font-monospace" rows="4"
-        placeholder="行业网核心交换,10.5.0.1,30&#10;行业网业务主机,10.5.0.20,30"></textarea>
+      <table class="table nw-table table-sm align-middle" v-if="(ind.items || []).length">
+        <thead><tr><th>名称</th><th>监测 IP</th><th style="width:90px">间隔(秒)</th><th style="width:60px"></th></tr></thead>
+        <tbody>
+          <tr v-for="(it, i) in ind.items" :key="i">
+            <td>{{ it.name }}</td><td><code>{{ it.target }}</code></td><td>{{ it.interval_s }}</td>
+            <td><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="ind.items.splice(i, 1)">删除</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="text-secondary small mb-2">暂无监测目标。</p>
+      <button class="btn btn-sm btn-outline-primary" @click="openInd()">＋ 新增监测 IP</button>
       <div v-if="indMsg" class="small mt-2" :class="indOk ? 'text-success' : 'text-danger'">{{ indMsg }}</div>
     </div>
+
+    <!-- 新增探测目标（单输入，六类目标共用） -->
+    <ModalBox :show="tModal.show" :title="tModal.title" @close="tModal.show = false" @ok="confirmTarget">
+      <input v-model="tModal.val" class="form-control form-control-sm font-monospace" :placeholder="tModal.placeholder"
+        @keyup.enter="confirmTarget" />
+      <div v-if="tModal.err" class="text-danger small mt-2">{{ tModal.err }}</div>
+    </ModalBox>
+
+    <!-- 新增内网服务监控目标 -->
+    <ModalBox :show="imModal.show" title="新增内网服务监控目标" @close="imModal.show = false" @ok="confirmIM">
+      <div class="row g-2">
+        <div class="col-md-6"><label class="form-label small mb-1">名称 <span class="text-danger">*</span></label>
+          <input v-model="imModal.name" class="form-control form-control-sm" placeholder="如 OA系统" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">类型</label>
+          <select v-model="imModal.type" class="form-select form-select-sm">
+            <option value="http">http</option><option value="tcp">tcp</option><option value="icmp">icmp</option>
+          </select></div>
+        <div class="col-md-8"><label class="form-label small mb-1">目标 <span class="text-danger">*</span></label>
+          <input v-model="imModal.target" class="form-control form-control-sm font-monospace" placeholder="http: URL / tcp: host:port / icmp: IP" /></div>
+        <div class="col-md-4"><label class="form-label small mb-1">间隔(秒)</label>
+          <input v-model.number="imModal.interval_s" type="number" class="form-control form-control-sm" placeholder="30" /></div>
+      </div>
+      <div v-if="imModal.err" class="text-danger small mt-2">{{ imModal.err }}</div>
+    </ModalBox>
+
+    <!-- 新增行业网监测 IP -->
+    <ModalBox :show="indModal.show" title="新增行业网监测 IP（仅 ICMP）" @close="indModal.show = false" @ok="confirmInd">
+      <div class="row g-2">
+        <div class="col-md-6"><label class="form-label small mb-1">名称 <span class="text-danger">*</span></label>
+          <input v-model="indModal.name" class="form-control form-control-sm" placeholder="如 行业网核心交换" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">监测 IP <span class="text-danger">*</span></label>
+          <input v-model="indModal.target" class="form-control form-control-sm font-monospace" placeholder="10.5.0.1" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">间隔(秒)</label>
+          <input v-model.number="indModal.interval_s" type="number" class="form-control form-control-sm" placeholder="30" /></div>
+      </div>
+      <div v-if="indModal.err" class="text-danger small mt-2">{{ indModal.err }}</div>
+    </ModalBox>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '../../api'
-import { lines, parseLines } from '../../utils'
+import ModalBox from '../../components/ModalBox.vue'
+import TargetList from '../../components/TargetList.vue'
 
-const ac = ref({}), icmpStr = ref(''), tcpStr = ref(''), dnsStr = ref(''), httpStr = ref('')
+const ac = ref({ icmp_targets: [], tcp_targets: [], dns_servers: [], http_targets: [] })
 const enrollToken = ref(''), acMsg = ref(''), acOk = ref(false)
-const ext = ref({}), extHttpStr = ref(''), extIcmpStr = ref(''), extMsg = ref(''), extOk = ref(false)
-const im = ref({}), imStr = ref(''), imMsg = ref(''), imOk = ref(false)
-const ind = ref({}), indStr = ref(''), indMsg = ref(''), indOk = ref(false)
+const ext = ref({ http_targets: [], icmp_targets: [] }), extMsg = ref(''), extOk = ref(false)
+const im = ref({ enabled: false, items: [] }), imMsg = ref(''), imOk = ref(false)
+const ind = ref({ enabled: false, items: [] }), indMsg = ref(''), indOk = ref(false)
+
+const tModal = reactive({ show: false, title: '', placeholder: '', arr: null, val: '', err: '' })
+const imModal = reactive({ show: false, name: '', type: 'http', target: '', interval_s: 30, err: '' })
+const indModal = reactive({ show: false, name: '', target: '', interval_s: 30, err: '' })
 
 async function load() {
   const s = await api.get('/api/admin/settings')
   ac.value = s.agent_config || {}
-  icmpStr.value = lines(ac.value.icmp_targets)
-  tcpStr.value = lines(ac.value.tcp_targets)
-  dnsStr.value = lines(ac.value.dns_servers)
-  httpStr.value = lines(ac.value.http_targets)
+  for (const k of ['icmp_targets', 'tcp_targets', 'dns_servers', 'http_targets'])
+    if (!Array.isArray(ac.value[k])) ac.value[k] = []
   enrollToken.value = s['agent.enroll_token'] ? JSON.parse(JSON.stringify(s['agent.enroll_token'])) : ''
   ext.value = s.agent_config_external || {}
-  extHttpStr.value = lines(ext.value.http_targets)
-  extIcmpStr.value = lines(ext.value.icmp_targets)
+  for (const k of ['http_targets', 'icmp_targets'])
+    if (!Array.isArray(ext.value[k])) ext.value[k] = []
   im.value = s.internal_monitors || {}
-  imStr.value = (im.value.items || []).map(x => [x.name, x.type, x.target, x.interval_s].join(',')).join('\n')
+  if (!Array.isArray(im.value.items)) im.value.items = []
   ind.value = s.industry_monitors || {}
-  indStr.value = (ind.value.items || []).map(x => [x.name, x.target, x.interval_s].join(',')).join('\n')
+  if (!Array.isArray(ind.value.items)) ind.value.items = []
+}
+
+// ---- 目标弹窗 ----
+function openTarget(title, placeholder, arr) {
+  Object.assign(tModal, { show: true, title, placeholder, arr, val: '', err: '' })
+}
+function confirmTarget() {
+  const v = (tModal.val || '').trim()
+  if (!v) { tModal.err = '请输入目标'; return }
+  if (tModal.arr.includes(v)) { tModal.err = '该目标已存在'; return }
+  tModal.arr.push(v)
+  tModal.show = false
+}
+function removeItem(arr, i) { arr.splice(i, 1) }
+
+// ---- 内网监控/行业网弹窗 ----
+function openIM() { Object.assign(imModal, { show: true, name: '', type: 'http', target: '', interval_s: 30, err: '' }) }
+function confirmIM() {
+  imModal.err = ''
+  if (!imModal.name.trim()) { imModal.err = '请填写名称'; return }
+  if (!imModal.target.trim()) { imModal.err = '请填写目标'; return }
+  im.value.items.push({ name: imModal.name.trim(), type: imModal.type, target: imModal.target.trim(), interval_s: imModal.interval_s || 30 })
+  imModal.show = false
+}
+function openInd() { Object.assign(indModal, { show: true, name: '', target: '', interval_s: 30, err: '' }) }
+function confirmInd() {
+  indModal.err = ''
+  if (!indModal.name.trim()) { indModal.err = '请填写名称'; return }
+  if (!indModal.target.trim()) { indModal.err = '请填写监测 IP'; return }
+  ind.value.items.push({ name: indModal.name.trim(), target: indModal.target.trim(), interval_s: indModal.interval_s || 30 })
+  indModal.show = false
 }
 
 function bump(v) { v.version = (v.version || 0) + 1; return v }
@@ -104,11 +214,7 @@ function bump(v) { v.version = (v.version || 0) + 1; return v }
 async function saveAC() {
   acMsg.value = ''; acOk.value = false
   try {
-    const c = bump({ ...ac.value,
-      icmp_targets: parseLines(icmpStr.value), tcp_targets: parseLines(tcpStr.value),
-      dns_servers: parseLines(dnsStr.value), http_targets: parseLines(httpStr.value),
-    })
-    const body = { agent_config: c }
+    const body = { agent_config: bump(JSON.parse(JSON.stringify(ac.value))) }
     if (enrollToken.value) body['agent.enroll_token'] = enrollToken.value
     await api.put('/api/admin/settings', body)
     acMsg.value = '已保存，探针将在 60 秒内应用新配置'; acOk.value = true
@@ -118,11 +224,9 @@ async function saveAC() {
 async function saveExt() {
   extMsg.value = ''; extOk.value = false
   try {
-    const c = { ...ext.value,
-      http_targets: parseLines(extHttpStr.value), icmp_targets: parseLines(extIcmpStr.value),
-      skip_gateway: true, version: (ext.value.version || 0) + 1 }
+    const c = bump(JSON.parse(JSON.stringify(ext.value)))
+    c.skip_gateway = true
     await api.put('/api/admin/settings', { agent_config_external: c })
-    ext.value = c
     extMsg.value = '已保存'; extOk.value = true
   } catch (e) { extMsg.value = e.message }
 }
@@ -130,10 +234,7 @@ async function saveExt() {
 async function saveIM() {
   imMsg.value = ''; imOk.value = false
   try {
-    const items = imStr.value.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => {
-      const [name, type, target, interval] = l.split(',').map(x => (x || '').trim())
-      return { name, type: type || 'tcp', target, interval_s: Number(interval) || 30 }
-    }).filter(x => x.name && x.target)
+    const items = (im.value.items || []).filter(x => x.name && x.target)
     await api.put('/api/admin/settings', { internal_monitors: { enabled: im.value.enabled, items } })
     imMsg.value = `已保存 ${items.length} 个目标，30 秒内生效`; imOk.value = true
   } catch (e) { imMsg.value = e.message }
@@ -142,10 +243,7 @@ async function saveIM() {
 async function saveInd() {
   indMsg.value = ''; indOk.value = false
   try {
-    const items = indStr.value.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => {
-      const [name, target, interval] = l.split(',').map(x => (x || '').trim())
-      return { name, target, interval_s: Number(interval) || 30 }
-    }).filter(x => x.name && x.target)
+    const items = (ind.value.items || []).filter(x => x.name && x.target)
     await api.put('/api/admin/settings', { industry_monitors: { enabled: ind.value.enabled, items } })
     indMsg.value = `已保存 ${items.length} 个目标，30 秒内生效（仅 ICMP ping）`; indOk.value = true
   } catch (e) { indMsg.value = e.message }

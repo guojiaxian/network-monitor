@@ -5,64 +5,48 @@
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
         <h6 class="mb-0">楼层（子网）</h6>
+        <button class="btn btn-sm btn-primary ms-auto" @click="openFloor()">＋ 新增楼层</button>
       </div>
       <table class="table nw-table table-sm align-middle mb-2">
         <thead><tr><th style="width:180px">楼层名</th><th>子网 CIDR</th><th style="width:80px">线路数</th><th style="width:150px"></th></tr></thead>
         <tbody>
           <tr v-for="f in floors" :key="f.id">
             <td>{{ f.name }}</td><td><code>{{ f.cidr || '—' }}</code></td><td>{{ f.line_count }}</td>
-            <td class="text-end"><button class="btn btn-sm btn-outline-danger" @click="delFloor(f)">删除</button></td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary me-1" @click="openFloor(f)">编辑</button>
+              <button class="btn btn-sm btn-outline-danger" @click="delFloor(f)">删除</button>
+            </td>
           </tr>
-          <tr>
-            <td><input v-model="nf.name" class="form-control form-control-sm" placeholder="如 3楼" /></td>
-            <td><input v-model="nf.cidr" class="form-control form-control-sm" placeholder="10.8.27.0/24" /></td>
-            <td></td>
-            <td class="text-end"><button class="btn btn-sm btn-primary" @click="addFloor">新增楼层</button></td>
-          </tr>
+          <tr v-if="!floors.length"><td colspan="4" class="text-secondary">暂无楼层，点击右上角「＋ 新增楼层」</td></tr>
         </tbody>
       </table>
     </div>
 
     <div class="nw-card mb-3">
-      <h6>宽带线路</h6>
+      <div class="d-flex align-items-center mb-2">
+        <h6 class="mb-0">宽带线路</h6>
+        <button class="btn btn-sm btn-primary ms-auto" @click="openLine()">＋ 新增线路</button>
+      </div>
       <table class="table nw-table table-sm align-middle mb-2">
-        <thead><tr><th>线路名</th><th>出口公网 IP</th><th>契约带宽(下/上 Mbps)</th><th>楼层</th><th style="width:150px"></th></tr></thead>
+        <thead><tr><th>线路名</th><th>出口公网 IP</th><th>ISP / 归属地</th><th>契约带宽(下/上 Mbps)</th><th>楼层</th><th style="width:210px"></th></tr></thead>
         <tbody>
           <tr v-for="l in lines" :key="l.id">
             <td><router-link :to="'/lines/' + l.id">{{ l.name }}</router-link></td>
             <td><code>{{ l.public_ip || '—' }}</code></td>
+            <td class="small">{{ l.isp || '—' }}<span v-if="l.geo" class="text-secondary"> · {{ l.geo }}</span></td>
             <td>{{ l.contract_down_mbps || '—' }} / {{ l.contract_up_mbps || '—' }}</td>
             <td>{{ l.floor_name || '—' }}</td>
             <td class="text-end">
               <button class="btn btn-sm btn-outline-success me-1" :disabled="speeding === l.id" @click="speedNow(l)">
                 {{ speeding === l.id ? '已排程…' : '⚡ 立即测速' }}
               </button>
-              <button class="btn btn-sm btn-outline-primary me-1" @click="edit(l)">编辑</button>
+              <button class="btn btn-sm btn-outline-primary me-1" @click="openLine(l)">编辑</button>
               <button class="btn btn-sm btn-outline-danger" @click="delLine(l)">删除</button>
             </td>
           </tr>
-          <tr v-if="!lines.length"><td colspan="5" class="text-secondary">暂无线路，可在下方添加或用 CSV 批量导入</td></tr>
+          <tr v-if="!lines.length"><td colspan="6" class="text-secondary">暂无线路，点击右上角「＋ 新增线路」或用下方 CSV 批量导入</td></tr>
         </tbody>
       </table>
-
-      <div class="row g-2 align-items-end">
-        <div class="col-md-2"><label class="form-label small mb-1">线路名</label><input v-model="nl.name" class="form-control form-control-sm" /></div>
-        <div class="col-md-2"><label class="form-label small mb-1">出口公网 IP</label><input v-model="nl.public_ip" class="form-control form-control-sm" placeholder="留空=探针自动探测" /></div>
-        <div class="col-md-1"><label class="form-label small mb-1">下行M</label><input v-model.number="nl.contract_down_mbps" type="number" class="form-control form-control-sm" /></div>
-        <div class="col-md-1"><label class="form-label small mb-1">上行M</label><input v-model.number="nl.contract_up_mbps" type="number" class="form-control form-control-sm" /></div>
-        <div class="col-md-2">
-          <label class="form-label small mb-1">楼层</label>
-          <select v-model.number="nl.floor_id" class="form-select form-select-sm">
-            <option :value="undefined">未关联</option>
-            <option v-for="f in floors" :key="f.id" :value="f.id">{{ f.name }}</option>
-          </select>
-        </div>
-        <div class="col-md-2"><label class="form-label small mb-1">ISP</label><input v-model="nl.isp" class="form-control form-control-sm" placeholder="留空=探针自动探测" /></div>
-        <div class="col-md-2 text-end">
-          <button class="btn btn-sm btn-primary" @click="saveLine">{{ nl.id ? '保存修改' : '新增线路' }}</button>
-          <button v-if="nl.id" class="btn btn-sm btn-link" @click="resetLine">取消</button>
-        </div>
-      </div>
     </div>
 
     <div class="nw-card">
@@ -74,18 +58,53 @@
       <span v-if="importMsg" class="small ms-2" :class="importOk ? 'text-success' : 'text-danger'">{{ importMsg }}</span>
       <span v-if="speedMsg" class="small ms-2 text-success">{{ speedMsg }}</span>
     </div>
+
+    <!-- 新增/编辑楼层 -->
+    <ModalBox :show="fModal.show" :title="fModal.id ? '编辑楼层' : '新增楼层'" @close="fModal.show = false" @ok="saveFloor">
+      <div class="mb-2"><label class="form-label small mb-1">楼层名 <span class="text-danger">*</span></label>
+        <input v-model="fModal.name" class="form-control form-control-sm" placeholder="如 3楼" /></div>
+      <div><label class="form-label small mb-1">子网 CIDR</label>
+        <input v-model="fModal.cidr" class="form-control form-control-sm font-monospace" placeholder="10.8.27.0/24" />
+        <div class="form-text small">用于楼层 IP 扫描与展示，可留空</div></div>
+      <div v-if="fModal.err" class="text-danger small mt-2">{{ fModal.err }}</div>
+    </ModalBox>
+
+    <!-- 新增/编辑线路 -->
+    <ModalBox :show="lModal.show" :title="lModal.id ? '编辑线路' : '新增线路'" @close="lModal.show = false" @ok="saveLine">
+      <div class="row g-2">
+        <div class="col-md-6"><label class="form-label small mb-1">线路名 <span class="text-danger">*</span></label>
+          <input v-model="lModal.name" class="form-control form-control-sm" placeholder="如 联通3号线" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">关联楼层</label>
+          <select v-model.number="lModal.floor_id" class="form-select form-select-sm">
+            <option :value="undefined">未关联</option>
+            <option v-for="f in floors" :key="f.id" :value="f.id">{{ f.name }}</option>
+          </select></div>
+        <div class="col-md-4"><label class="form-label small mb-1">下行契约 Mbps</label>
+          <input v-model.number="lModal.contract_down_mbps" type="number" class="form-control form-control-sm" placeholder="如 1000" /></div>
+        <div class="col-md-4"><label class="form-label small mb-1">上行契约 Mbps</label>
+          <input v-model.number="lModal.contract_up_mbps" type="number" class="form-control form-control-sm" placeholder="如 50" /></div>
+        <div class="col-md-4"><label class="form-label small mb-1">ISP</label>
+          <input v-model="lModal.isp" class="form-control form-control-sm" placeholder="留空=探针自动探测" /></div>
+        <div class="col-12"><label class="form-label small mb-1">出口公网 IP</label>
+          <input v-model="lModal.public_ip" class="form-control form-control-sm font-monospace" placeholder="留空=探针自动探测并自动跟随变更" />
+          <div class="form-text small">公网 IP、ISP、归属地均由绑定探针自动探测回填，手工值仅作探测全挂时的兜底显示</div></div>
+      </div>
+      <div v-if="lModal.err" class="text-danger small mt-2">{{ lModal.err }}</div>
+    </ModalBox>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '../api'
+import ModalBox from '../components/ModalBox.vue'
 
 const floors = ref([]), lines = ref([])
-const nf = ref({ name: '', cidr: '' })
-const nl = ref({})
 const csv = ref(''), importMsg = ref(''), importOk = ref(false)
 const speeding = ref(0), speedMsg = ref('')
+const fModal = reactive({ show: false, id: 0, name: '', cidr: '', err: '' })
+const lModal = reactive({ show: false, id: 0, name: '', public_ip: '', contract_down_mbps: undefined,
+  contract_up_mbps: undefined, floor_id: undefined, isp: '', err: '' })
 
 async function speedNow(l) {
   speedMsg.value = ''
@@ -102,14 +121,18 @@ async function load() {
   lines.value = await api.get('/api/admin/lines')
 }
 
-function resetLine() { nl.value = {} }
-function edit(l) { nl.value = { ...l, floor_id: l.floor_id || undefined } }
-
-async function addFloor() {
-  if (!nf.value.name) return
-  await api.post('/api/admin/floors', { name: nf.value.name, cidr: nf.value.cidr })
-  nf.value = { name: '', cidr: '' }
-  await load()
+// ---- 楼层：点击新增 → 弹窗 → 确定 ----
+function openFloor(f) {
+  Object.assign(fModal, { show: true, id: f ? f.id : 0, name: f ? f.name : '', cidr: f ? f.cidr : '', err: '' })
+}
+async function saveFloor() {
+  fModal.err = ''
+  if (!fModal.name.trim()) { fModal.err = '请填写楼层名'; return }
+  try {
+    await api.post('/api/admin/floors', { id: fModal.id || undefined, name: fModal.name.trim(), cidr: fModal.cidr.trim() })
+    fModal.show = false
+    await load()
+  } catch (e) { fModal.err = e.message }
 }
 
 async function delFloor(f) {
@@ -118,11 +141,30 @@ async function delFloor(f) {
   await load()
 }
 
+// ---- 线路：点击新增/编辑 → 弹窗 → 确定 ----
+function openLine(l) {
+  Object.assign(lModal, {
+    show: true, id: l ? l.id : 0,
+    name: l ? l.name : '', public_ip: l ? l.public_ip : '',
+    contract_down_mbps: l ? l.contract_down_mbps || undefined : undefined,
+    contract_up_mbps: l ? l.contract_up_mbps || undefined : undefined,
+    floor_id: l && l.floor_id ? l.floor_id : undefined,
+    isp: l ? l.isp : '', err: '',
+  })
+}
 async function saveLine() {
-  if (!nl.value.name) return
-  await api.post('/api/admin/lines', nl.value)
-  resetLine()
-  await load()
+  lModal.err = ''
+  if (!lModal.name.trim()) { lModal.err = '请填写线路名'; return }
+  try {
+    await api.post('/api/admin/lines', {
+      id: lModal.id || undefined, name: lModal.name.trim(),
+      public_ip: lModal.public_ip.trim(), isp: lModal.isp.trim(),
+      contract_down_mbps: lModal.contract_down_mbps || 0, contract_up_mbps: lModal.contract_up_mbps || 0,
+      floor_id: lModal.floor_id || undefined,
+    })
+    lModal.show = false
+    await load()
+  } catch (e) { lModal.err = e.message }
 }
 
 async function delLine(l) {
