@@ -13,8 +13,8 @@
 
     <div class="nw-card">
       <h6>告警列表</h6>
-      <table class="table nw-table table-sm align-middle">
-        <thead><tr><th>级别</th><th>类型</th><th>标题</th><th>开始时间</th><th>恢复时间</th><th>状态</th></tr></thead>
+      <table class="table nw-table table-sm align-middle table-fixed">
+        <thead><tr><th style="width:7%">级别</th><th style="width:11%">类型</th><th>标题</th><th style="width:15%">开始时间</th><th style="width:14%">恢复时间</th><th style="width:9%">状态</th></tr></thead>
         <tbody>
           <tr v-for="a in alerts" :key="a.id">
             <td><span class="badge" :class="sevCls(a.severity)">{{ a.severity }}</span></td>

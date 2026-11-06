@@ -7,11 +7,15 @@
         <h6 class="mb-0">宽带线路</h6>
         <button class="btn btn-sm btn-primary ms-auto" @click="openLine()">＋ 新增线路</button>
       </div>
-      <table class="table nw-table table-sm align-middle mb-2">
-        <thead><tr><th>线路名</th><th>出口公网 IP</th><th>ISP / 归属地</th><th>契约带宽(下/上 Mbps)</th><th>楼层</th><th style="width:210px"></th></tr></thead>
+      <table class="table nw-table table-sm align-middle mb-2 table-fixed">
+        <thead><tr>
+          <th style="width:14%">线路名</th><th style="width:14%">子网 CIDR</th><th style="width:13%">出口公网 IP</th>
+          <th style="width:16%">ISP / 归属地</th><th style="width:13%">契约带宽(下/上 Mbps)</th><th style="width:15%">楼层</th><th style="width:230px"></th>
+        </tr></thead>
         <tbody>
           <tr v-for="l in lines" :key="l.id">
             <td><router-link :to="'/lines/' + l.id">{{ l.name }}</router-link></td>
+            <td><code>{{ l.cidr || '—' }}</code></td>
             <td><code>{{ l.public_ip || '—' }}</code></td>
             <td class="small">{{ l.isp || '—' }}<span v-if="l.geo" class="text-secondary"> · {{ l.geo }}</span></td>
             <td>{{ l.contract_down_mbps || '—' }} / {{ l.contract_up_mbps || '—' }}</td>
@@ -24,7 +28,7 @@
               <button class="btn btn-sm btn-outline-danger" @click="delLine(l)">删除</button>
             </td>
           </tr>
-          <tr v-if="!lines.length"><td colspan="6" class="text-secondary">暂无线路，点击右上角「＋ 新增线路」或用下方 CSV 批量导入</td></tr>
+          <tr v-if="!lines.length"><td colspan="7" class="text-secondary">暂无线路，点击右上角「＋ 新增线路」或用下方 CSV 批量导入</td></tr>
         </tbody>
       </table>
     </div>

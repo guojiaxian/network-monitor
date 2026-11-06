@@ -121,6 +121,8 @@ table.nw-table td, table.nw-table th { padding-top: .68rem; padding-bottom: .68r
 /* 固定列宽表格：配合各 th 百分比宽，展开行增减不引起列宽重排 */
 table.table-fixed { table-layout: fixed; }
 table.table-fixed td, table.table-fixed th { overflow-wrap: break-word; }
+/* 表格内按钮不换行（操作列窄也不挤压成两行） */
+table.nw-table td .btn, table.nw-table th .btn { white-space: nowrap; }
 
 /* IP 扫描格子墙：一格一 IP，绿=在线（ping 通），灰=离线 */
 .ip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }

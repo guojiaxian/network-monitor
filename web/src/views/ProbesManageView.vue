@@ -16,10 +16,13 @@
           <button class="btn btn-sm btn-primary" @click="openProvision()">＋ 新建探针</button>
         </div>
       </div>
-      <table class="table nw-table table-sm align-middle">
+      <!-- table-fixed 固定列宽：补出口源 IP/最后心跳两列填满宽度，与探针状态页信息对齐 -->
+      <table class="table nw-table table-sm align-middle table-fixed">
         <thead>
           <tr>
-            <th>探针 ID</th><th>名称</th><th>分组</th><th>绑定线路</th><th>版本</th><th>状态</th><th style="width:90px"></th>
+            <th style="width:11%">探针 ID</th><th style="width:13%">名称</th><th style="width:7%">分组</th>
+            <th style="width:15%">绑定线路</th><th style="width:7%">版本</th><th style="width:10%">状态</th>
+            <th style="width:12%">出口源 IP</th><th style="width:13%">最后心跳</th><th style="width:12%">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -30,12 +33,14 @@
             <td>{{ lineName(p) }}</td>
             <td>{{ p.probe.version || '—' }}<span v-if="p.probe.pending_version" class="text-warning small"> → {{ p.probe.pending_version }}</span></td>
             <td><StatusBadge :status="p.status && p.status.status || 'unknown'" /></td>
+            <td><code>{{ p.probe.source_ip || '—' }}</code></td>
+            <td class="small text-secondary">{{ fmtTime(p.probe.last_seen) }}</td>
             <td class="text-end">
               <button class="btn btn-sm btn-outline-secondary" @click="openOps(p)">⚙ 编辑 / 运维</button>
             </td>
           </tr>
           <tr v-if="!probes.length">
-            <td colspan="7" class="text-secondary py-4 text-center">
+            <td colspan="9" class="text-secondary py-4 text-center">
               暂无探针注册。请在楼层 VM 上执行：<code>deploy/install-agent.sh http://&lt;中心IP&gt; &lt;注册令牌&gt;</code>
             </td>
           </tr>

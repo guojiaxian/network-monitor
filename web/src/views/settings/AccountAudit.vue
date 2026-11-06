@@ -35,8 +35,8 @@
 
     <div class="nw-card mb-3">
       <h6>操作审计日志（最近 100 条）</h6>
-      <table class="table nw-table table-sm">
-        <thead><tr><th style="width:160px">时间</th><th style="width:120px">用户</th><th>操作</th><th>结果</th></tr></thead>
+      <table class="table nw-table table-sm table-fixed">
+        <thead><tr><th style="width:14%">时间</th><th style="width:10%">用户</th><th>操作</th><th style="width:30%">结果</th></tr></thead>
         <tbody>
           <tr v-for="a in audits" :key="a.id">
             <td class="small text-secondary">{{ fmt(a.created_at) }}</td>

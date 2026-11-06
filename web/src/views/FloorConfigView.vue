@@ -8,8 +8,8 @@
         <h6 class="mb-0">楼层列表</h6>
         <button class="btn btn-sm btn-primary ms-auto" @click="openFloor()">＋ 新增楼层</button>
       </div>
-      <table class="table nw-table table-sm align-middle mb-2">
-        <thead><tr><th style="width:180px">楼层名</th><th>子网 CIDR</th><th style="width:100px">线路数</th><th style="width:150px"></th></tr></thead>
+      <table class="table nw-table table-sm align-middle mb-2 table-fixed">
+        <thead><tr><th style="width:18%">楼层名</th><th style="width:44%">子网 CIDR</th><th style="width:16%">线路数</th><th style="width:170px"></th></tr></thead>
         <tbody>
           <tr v-for="f in floors" :key="f.id">
             <td>{{ f.name }}</td><td><code>{{ f.cidr || '—' }}</code></td><td>{{ f.line_count }}</td>
