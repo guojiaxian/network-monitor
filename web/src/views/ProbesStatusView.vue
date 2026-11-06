@@ -12,9 +12,14 @@
     </div>
 
     <div class="nw-card mb-3">
-      <table class="table nw-table table-sm align-middle">
+      <!-- table-layout:fixed 固定列宽：展开行出现/收起时列表不再左右跳动 -->
+      <table class="table nw-table table-sm align-middle table-fixed">
         <thead>
-          <tr><th style="width:28px"></th><th>名称</th><th>分组</th><th>绑定线路</th><th>状态</th><th>自健康 (CPU/内存/磁盘)</th><th>出口公网 IP</th><th>出口源 IP</th><th>默认网关</th><th>最后心跳</th></tr>
+          <tr>
+            <th style="width:3.5%"></th><th style="width:15%">名称</th><th style="width:7.5%">分组</th>
+            <th style="width:11%">绑定线路</th><th style="width:8%">状态</th><th style="width:12%">自健康 (CPU/内存/磁盘)</th>
+            <th style="width:14%">出口公网 IP</th><th style="width:9.5%">出口源 IP</th><th style="width:9.5%">默认网关</th><th style="width:10%">最后心跳</th>
+          </tr>
         </thead>
         <tbody>
           <template v-for="p in probes" :key="p.probe.id">

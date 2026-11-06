@@ -48,7 +48,7 @@ body {
 
 /* 右侧主体：顶栏 + 内容 */
 .nw-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; width: 100%; }
+.nw-main { flex: 1; padding: 22px 26px; width: 100%; }
 
 /* 顶部标题栏：左=分组/页面面包屑，右=大屏按钮+当前用户 */
 .nw-topbar {
@@ -116,6 +116,11 @@ body {
 .stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
 
 table.nw-table td, table.nw-table th { vertical-align: middle; }
+/* 行高加大（覆盖 Bootstrap table-sm 紧凑 padding），列表更易读 */
+table.nw-table td, table.nw-table th { padding-top: .68rem; padding-bottom: .68rem; }
+/* 固定列宽表格：配合各 th 百分比宽，展开行增减不引起列宽重排 */
+table.table-fixed { table-layout: fixed; }
+table.table-fixed td, table.table-fixed th { overflow-wrap: break-word; }
 
 /* IP 扫描格子墙：一格一 IP，绿=在线（ping 通），灰=离线 */
 .ip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
