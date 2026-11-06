@@ -8,6 +8,7 @@ const routes = [
   { path: '/lines', component: () => import('./views/LinesView.vue'), meta: { auth: true } },
   { path: '/lines/:id', component: () => import('./views/LineDetailView.vue'), meta: { auth: true } },
   { path: '/probes', component: () => import('./views/ProbesStatusView.vue'), meta: { auth: true } }, // 探针状态：只读展示
+  { path: '/scan', component: () => import('./views/ScanView.vue'), meta: { auth: true } }, // 楼层 IP 扫描（触发为 POST，观察者会被 403）
   { path: '/probes/manage', component: () => import('./views/ProbesManageView.vue'), meta: { auth: true } }, // 探针管理：绑定/运维/升级
   { path: '/probes/:id/term', component: () => import('./views/SshTermView.vue'), meta: { auth: true } },
   { path: '/alerts', component: () => import('./views/AlertsView.vue'), meta: { auth: true } },

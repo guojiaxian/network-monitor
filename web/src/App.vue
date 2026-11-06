@@ -6,6 +6,7 @@
       <router-link to="/">📋 总览</router-link>
       <router-link to="/alerts">🔔 告警中心</router-link>
       <router-link to="/probes">📡 探针状态</router-link>
+      <router-link to="/scan">🔎 IP 扫描</router-link>
       <router-link to="/history">📜 探测历史</router-link>
       <router-link to="/reports">📊 报表</router-link>
       <a href="#/screen" target="_blank">🖥️ 大屏展示</a>
