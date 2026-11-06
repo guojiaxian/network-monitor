@@ -11,7 +11,7 @@
         <button class="btn btn-sm btn-primary ms-auto" @click="openFloor()">＋ 新增楼层</button>
       </div>
       <table class="table nw-table table-sm align-middle mb-2 table-fixed">
-        <thead><tr><th style="width:12%">楼层名</th><th style="width:20%">子网 CIDR</th><th style="width:7%">线路数</th><th style="width:41%">关联线路（出口公网 IP）</th><th style="width:170px"></th></tr></thead>
+        <thead><tr><th style="width:22%">楼层名</th><th style="width:24%">子网 CIDR</th><th style="width:17%">线路数</th><th style="width:25%">关联线路（出口公网 IP）</th><th style="width:12%" class="text-end"></th></tr></thead>
         <tbody>
           <tr v-for="f in floors" :key="f.id">
             <td>{{ f.name }}</td><td><code>{{ f.cidr || '—' }}</code></td><td>{{ f.line_count }}</td>
