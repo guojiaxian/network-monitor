@@ -61,6 +61,7 @@ func (a *AdminAPI) Routes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(a.requireSession, a.auditAndGuard)
 		r.Post("/logout", a.logout)
+		r.Get("/me", a.me) // 当前会话用户（顶栏显示）
 
 		r.Get("/overview", a.overview)
 
@@ -121,6 +122,12 @@ func (a *AdminAPI) Routes(r chi.Router) {
 // ---------- 会话 ----------
 
 const sessionTTL = 12 * time.Hour
+
+// me 当前登录用户（顶栏显示用；GET 不审计）
+func (a *AdminAPI) me(w http.ResponseWriter, r *http.Request) {
+	sess, _ := r.Context().Value(ctxUserKey).(nwSession)
+	writeJSON(w, map[string]string{"username": sess.user, "role": sess.role})
+}
 
 func (a *AdminAPI) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

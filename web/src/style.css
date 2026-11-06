@@ -46,7 +46,31 @@ body {
 }
 .nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #8aa8c9; padding: 8px 12px; }
 
-.nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; }
+/* 右侧主体：顶栏 + 内容 */
+.nw-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.nw-main { flex: 1; padding: 22px 26px; max-width: 1400px; width: 100%; }
+
+/* 顶部标题栏：左=分组/页面面包屑，右=大屏按钮+当前用户 */
+.nw-topbar {
+  height: 52px; flex: 0 0 52px;
+  background: #fff; border-bottom: 1px solid #e8eaee;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 22px; position: sticky; top: 0; z-index: 10;
+}
+.nw-crumb { display: flex; align-items: center; gap: 8px; font-size: .95rem; }
+.nw-crumb-group { color: #98a2ae; }
+.nw-crumb-sep { color: #c3cad3; }
+.nw-crumb-page { font-weight: 600; color: #1d2635; }
+.nw-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.nw-screen-btn { white-space: nowrap; }
+.nw-user { display: flex; align-items: center; gap: 8px; }
+.nw-avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex: 0 0 30px;
+  background: var(--nw-sidebar-active); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .85rem; font-weight: 700;
+}
+.nw-username { font-size: .92rem; color: #1d2635; font-weight: 600; }
 
 .nw-card {
   background: #fff; border: 1px solid #e8eaee; border-radius: 12px;
