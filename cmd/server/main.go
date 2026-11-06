@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +26,8 @@ var version = "dev"
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	cfg := server.LoadConfig()
+	cfg.Version = version
+	startedAt := time.Now()
 
 	_ = os.MkdirAll(filepath.Join(cfg.DataDir, "agent-releases"), 0o755)
 
@@ -73,6 +76,30 @@ func main() {
 	})
 	r.Head("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(200)
+	})
+
+	// health API：JSON 返回状态/版本/运行时长/依赖检查（公开，供运维与监控探针使用）
+	r.Get("/api/health", func(w http.ResponseWriter, req *http.Request) {
+		cctx, ccancel := context.WithTimeout(req.Context(), 3*time.Second)
+		defer ccancel()
+		dbOK := store.Ping(cctx) == nil
+		vmOK := false
+		if resp, err := http.Get(cfg.VMURL + "/health"); err == nil {
+			vmOK = resp.StatusCode == 200
+			resp.Body.Close()
+		}
+		status := "ok"
+		if !dbOK || !vmOK {
+			status = "degraded"
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":    status,
+			"version":   cfg.Version,
+			"uptime_s":  int(time.Since(startedAt).Seconds()),
+			"checks":    map[string]bool{"db": dbOK, "vm": vmOK},
+			"time":      time.Now().Format(time.RFC3339),
+		})
 	})
 
 	r.Route("/api/agent", server.NewAgentAPI(cfg, store, eng, sched).Routes)

@@ -13,6 +13,7 @@ type Config struct {
 	WebDir      string // 前端静态文件目录（不存在则不挂载）
 	DataDir     string // 数据目录（探针版本发布文件等）
 	SSHPubKeyFile string // 中心 SSH 公钥文件（零接触开通时下发到探针，实现免密；空=跳过）
+	Version       string // server 版本（main 注入，health API 返回）
 }
 
 func LoadConfig() Config {

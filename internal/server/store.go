@@ -43,6 +43,9 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
+// Ping 数据库连通性检查（health API 用）
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS floors (
@@ -123,6 +126,12 @@ CREATE TABLE IF NOT EXISTS audit (
   username TEXT NOT NULL DEFAULT '',
   action TEXT NOT NULL,
   detail TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  role TEXT NOT NULL,
+  exp TIMESTAMPTZ NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_releases (
   id BIGSERIAL PRIMARY KEY,
@@ -920,6 +929,41 @@ FROM floors f ORDER BY f.id`)
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ---------- 会话持久化（重启后会话保留，30 天免登录） ----------
+
+func (s *Store) CreateSession(ctx context.Context, token, username, role string, exp time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO sessions(token, username, role, exp) VALUES($1,$2,$3,$4)
+		 ON CONFLICT (token) DO UPDATE SET username=$2, role=$3, exp=$4`, token, username, role, exp)
+	return err
+}
+
+// GetSession 回源查会话（内存失效/重启后用）；过期行顺带删除并返回 false
+func (s *Store) GetSession(ctx context.Context, token string) (username, role string, ok bool) {
+	var u, r string
+	var exp time.Time
+	err := s.pool.QueryRow(ctx, `SELECT username, role, exp FROM sessions WHERE token=$1`, token).
+		Scan(&u, &r, &exp)
+	if err != nil {
+		return "", "", false
+	}
+	if time.Now().After(exp) {
+		_, _ = s.pool.Exec(ctx, `DELETE FROM sessions WHERE token=$1`, token)
+		return "", "", false
+	}
+	return u, r, true
+}
+
+func (s *Store) DeleteSession(ctx context.Context, token string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token=$1`, token)
+	return err
+}
+
+// CleanExpiredSessions 清理过期会话行（登录时顺手调用）
+func (s *Store) CleanExpiredSessions(ctx context.Context) {
+	_, _ = s.pool.Exec(ctx, `DELETE FROM sessions WHERE exp < now()`)
 }
 
 // GetFloor 按 ID 取单个楼层（IP 扫描等按楼层操作用）

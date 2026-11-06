@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -122,7 +123,8 @@ func (a *AdminAPI) Routes(r chi.Router) {
 
 // ---------- 会话 ----------
 
-const sessionTTL = 12 * time.Hour
+// 会话 30 天（Cookie Max-Age 与 PG sessions.exp 一致；持久化到库，server 重启不失效）
+const sessionTTL = 30 * 24 * time.Hour
 
 // me 当前登录用户（顶栏显示用；GET 不审计）
 func (a *AdminAPI) me(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +145,16 @@ func (a *AdminAPI) requireSession(next http.Handler) http.Handler {
 				valid = true
 			}
 			a.sessMu.Unlock()
+			// 内存未命中（server 重启后会话内存丢失）→ 回源 PG 恢复
+			if !valid {
+				if u, rl, ok2 := a.store.GetSession(r.Context(), c.Value); ok2 {
+					a.sessMu.Lock()
+					sess = nwSession{user: u, role: rl, exp: time.Now().Add(sessionTTL)}
+					a.sessions[c.Value] = sess
+					a.sessMu.Unlock()
+					valid = true
+				}
+			}
 		}
 		if !valid {
 			httpError(w, 401, "请先登录")
@@ -182,7 +194,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
-func (a *AdminAPI) newSession(w http.ResponseWriter, user, role string) {
+func (a *AdminAPI) newSession(w http.ResponseWriter, r *http.Request, user, role string) {
 	tok := randToken()
 	a.sessMu.Lock()
 	// 顺手清理过期会话
@@ -193,6 +205,12 @@ func (a *AdminAPI) newSession(w http.ResponseWriter, user, role string) {
 	}
 	a.sessions[tok] = nwSession{user: user, role: role, exp: time.Now().Add(sessionTTL)}
 	a.sessMu.Unlock()
+	// 持久化（重启后会话保留）并顺手清理过期行
+	exp := time.Now().Add(sessionTTL)
+	if err := a.store.CreateSession(r.Context(), tok, user, role, exp); err != nil {
+		log.Printf("persist session: %v", err)
+	}
+	a.store.CleanExpiredSessions(r.Context())
 	http.SetCookie(w, &http.Cookie{
 		Name: "nw_session", Value: tok, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
@@ -250,7 +268,7 @@ func (a *AdminAPI) setup(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, "db")
 		return
 	}
-	a.newSession(w, req.Username, "admin")
+	a.newSession(w, r, req.Username, "admin")
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -270,7 +288,7 @@ func (a *AdminAPI) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = id
-	a.newSession(w, req.Username, a.store.GetUserRole(r.Context(), req.Username))
+	a.newSession(w, r, req.Username, a.store.GetUserRole(r.Context(), req.Username))
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -279,6 +297,7 @@ func (a *AdminAPI) logout(w http.ResponseWriter, r *http.Request) {
 		a.sessMu.Lock()
 		delete(a.sessions, c.Value)
 		a.sessMu.Unlock()
+		_ = a.store.DeleteSession(r.Context(), c.Value) // 同步删持久化行
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }

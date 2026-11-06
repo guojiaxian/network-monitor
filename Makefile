@@ -3,10 +3,10 @@
 build: agent server web
 
 agent:
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/netwatch-agent ./cmd/agent
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/netwatch-agent ./cmd/agent
 
 server:
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/netwatch-server ./cmd/server
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/netwatch-server ./cmd/server
 
 web:
 	cd web && npm install --registry=https://registry.npmmirror.com --no-audit --no-fund && npm run build
