@@ -123,7 +123,7 @@
           <b>⚠ 需要确认：</b>
           <ul class="mb-0 ps-3"><li v-for="w in pJob.job.warnings" :key="w">{{ w }}</li></ul>
         </div>
-        <div v-else class="text-danger small mt-2">❌ {{ pJob.job.err }}</div>
+        <div v-else-if="pJob.job.err" class="text-danger small mt-2">❌ {{ pJob.job.err }}</div>
       </template>
       <template #footer>
         <button class="btn btn-sm btn-outline-secondary" @click="closeProvision">{{ pJob.job && pJob.job.status === 'running' ? '后台运行，关闭' : '关闭' }}</button>
