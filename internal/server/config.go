@@ -12,6 +12,7 @@ type Config struct {
 	BaseURL     string // 对外访问基地址（告警邮件里的详情链接）
 	WebDir      string // 前端静态文件目录（不存在则不挂载）
 	DataDir     string // 数据目录（探针版本发布文件等）
+	SSHPubKeyFile string // 中心 SSH 公钥文件（零接触开通时下发到探针，实现免密；空=跳过）
 }
 
 func LoadConfig() Config {
@@ -23,6 +24,7 @@ func LoadConfig() Config {
 		BaseURL:     envOr("NW_BASE_URL", ""),
 		WebDir:      envOr("NW_WEB_DIR", "./web/dist"),
 		DataDir:     envOr("NW_DATA_DIR", "./data"),
+		SSHPubKeyFile: envOr("NW_SSH_PUBKEY_FILE", ""),
 	}
 }
 

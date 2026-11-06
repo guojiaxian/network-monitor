@@ -6,7 +6,10 @@
     </div>
 
     <div class="nw-card mb-3">
-      <h6>探针列表</h6>
+      <div class="d-flex align-items-center mb-2">
+        <h6 class="mb-0">探针列表</h6>
+        <button class="btn btn-sm btn-primary ms-auto" @click="openProvision()">＋ 新建探针</button>
+      </div>
       <table class="table nw-table table-sm align-middle">
         <thead>
           <tr>
@@ -80,6 +83,42 @@
       </div>
     </ModalBox>
 
+    <!-- 新建探针（零接触开通）：免密配置+装机+注册+线路自动匹配绑定 -->
+    <ModalBox :show="pJob.show" title="新建探针（零接触开通）" wide @close="closeProvision" :ok-text="pJob.running ? '后台运行中…' : '开始开通'" @ok="startProvision">
+      <template v-if="!pJob.job">
+        <p class="text-secondary small mb-2">输入<b>全新干净服务器</b>的 SSH 信息（密码只需输入这一次）：自动完成免密配置、探针安装、注册，并按探测到的出口公网 IP 自动匹配宽带线路绑定（无匹配线路时自动创建并归属楼层）。</p>
+        <div class="row g-2">
+          <div class="col-md-5"><label class="form-label small mb-1">服务器 IP <span class="text-danger">*</span></label>
+            <input v-model="pJob.form.ip" class="form-control form-control-sm font-monospace" placeholder="10.8.15.202" :disabled="pJob.running" /></div>
+          <div class="col-md-3"><label class="form-label small mb-1">SSH 端口</label>
+            <input v-model.number="pJob.form.ssh_port" type="number" class="form-control form-control-sm" :disabled="pJob.running" /></div>
+          <div class="col-md-4"><label class="form-label small mb-1">SSH 用户</label>
+            <input v-model="pJob.form.ssh_user" class="form-control form-control-sm" placeholder="root" :disabled="pJob.running" /></div>
+          <div class="col-md-6"><label class="form-label small mb-1">SSH 密码 <span class="text-danger">*</span>（仅输入一次）</label>
+            <input v-model="pJob.form.ssh_pass" type="password" class="form-control form-control-sm" autocomplete="new-password" :disabled="pJob.running" /></div>
+          <div class="col-md-6"><label class="form-label small mb-1">探针名称（可选）</label>
+            <input v-model="pJob.form.name" class="form-control form-control-sm" placeholder="留空=probe-IP尾段" :disabled="pJob.running" /></div>
+        </div>
+        <div v-if="pJob.err" class="text-danger small mt-2">{{ pJob.err }}</div>
+      </template>
+      <template v-else>
+        <div class="small font-monospace bg-light p-2 rounded" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">{{ (pJob.job.steps || []).join('\n') }}</div>
+        <div v-if="pJob.job.status === 'running'" class="text-secondary small mt-2"><span class="spinner-border spinner-border-sm me-1"></span>开通进行中，请勿关闭服务器电源…（关闭弹窗不会中断任务）</div>
+        <div v-else-if="pJob.job.status === 'done'" class="text-success small mt-2">
+          🎉 开通完成！探针 <code>{{ (pJob.job.probe_id || '').slice(0,8) }}</code>
+          已绑定线路「{{ pJob.job.line_name }}」<span v-if="pJob.job.floor_name">（楼层：{{ pJob.job.floor_name }}）</span>
+          <span v-if="pJob.job.auto_created" class="text-warning">（该线路为自动创建，可在线路配置中调整名称/契约带宽）</span>，
+          出口 IP {{ pJob.job.egress_ip }}。
+        </div>
+        <div v-else class="text-danger small mt-2">❌ {{ pJob.job.err }}</div>
+      </template>
+      <template #footer>
+        <button class="btn btn-sm btn-outline-secondary" @click="closeProvision">{{ pJob.job && pJob.job.status === 'running' ? '后台运行，关闭' : '关闭' }}</button>
+        <button v-if="!pJob.job" class="btn btn-sm btn-primary" @click="startProvision">开始开通</button>
+        <button v-else-if="pJob.job.status !== 'running'" class="btn btn-sm btn-primary" @click="resetProvision">再开通一台</button>
+      </template>
+    </ModalBox>
+
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
         <h6 class="mb-0">版本发布与升级</h6>
@@ -123,7 +162,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
 import ModalBox from '../components/ModalBox.vue'
@@ -136,6 +175,46 @@ const opMsg = ref(''), opOk = ref(false)
 const sshCsv = ref(''), importSSHMsg = ref(''), importSSHOok = ref(false)
 const showImport = ref(false)
 const pModal = ref({ show: false })
+const pJob = reactive({ show: false, running: false, err: '', job: null, timer: null,
+  form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '' } })
+
+function openProvision() {
+  Object.assign(pJob, { show: true, running: false, err: '', job: null,
+    form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '' } })
+}
+function closeProvision() {
+  pJob.show = false
+  if (pJob.timer) { clearInterval(pJob.timer); pJob.timer = null }
+}
+function resetProvision() {
+  if (pJob.timer) { clearInterval(pJob.timer); pJob.timer = null }
+  Object.assign(pJob, { running: false, err: '', job: null,
+    form: { ip: '', ssh_port: 22, ssh_user: 'root', ssh_pass: '', name: '' } })
+}
+async function startProvision() {
+  pJob.err = ''
+  if (!pJob.form.ip.trim() || !pJob.form.ssh_pass) { pJob.err = '请填写服务器 IP 与 SSH 密码'; return }
+  try {
+    const d = await api.post('/api/admin/probes/provision', { ...pJob.form, ssh_port: Number(pJob.form.ssh_port) || 22 })
+    pJob.job = { id: d.job_id, status: 'running', steps: [] }
+    pJob.running = true
+    pJob.timer = setInterval(pollProvision, 2000)
+    pollProvision()
+  } catch (e) { pJob.err = e.message }
+}
+async function pollProvision() {
+  try {
+    pJob.job = await api.get('/api/admin/probes/provision/' + pJob.job.id)
+    if (pJob.job.status !== 'running') {
+      if (pJob.timer) { clearInterval(pJob.timer); pJob.timer = null }
+      pJob.running = false
+      await load()
+    }
+  } catch (e) {
+    if (pJob.timer) { clearInterval(pJob.timer); pJob.timer = null }
+    pJob.running = false; pJob.err = e.message
+  }
+}
 
 const selVer = computed(() => {
   const r = releases.value.find(x => x.id === selRelease.value)
@@ -258,4 +337,5 @@ async function del() {
 }
 
 onMounted(load)
+onUnmounted(() => { if (pJob.timer) clearInterval(pJob.timer) })
 </script>

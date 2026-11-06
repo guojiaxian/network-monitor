@@ -35,6 +35,8 @@ type AdminAPI struct {
 	tsdb     *TSDB
 	sessMu   sync.Mutex
 	sessions map[string]nwSession
+	provMu   sync.Mutex
+	provJobs map[string]*ProvisionJob // 零接触开通任务（内存态）
 }
 
 type nwSession struct {
@@ -49,7 +51,7 @@ const ctxUserKey ctxKey = 1
 
 func NewAdminAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched, rep *Reporter, mon *MonitorRunner, ind *IndustryRunner, tsdb *TSDB) *AdminAPI {
 	return &AdminAPI{cfg: cfg, store: store, eng: eng, sched: sched, rep: rep, mon: mon, ind: ind, tsdb: tsdb,
-		sessions: map[string]nwSession{}}
+		sessions: map[string]nwSession{}, provJobs: map[string]*ProvisionJob{}}
 }
 
 func (a *AdminAPI) Routes(r chi.Router) {
@@ -81,6 +83,8 @@ func (a *AdminAPI) Routes(r chi.Router) {
 		r.Post("/probes/{id}/ssh/exec", a.sshExec)
 		r.Get("/probes/{id}/ssh/terminal", a.sshTerminal)
 		r.Post("/probes/ssh/import", a.sshImport)
+		r.Post("/probes/provision", a.provisionNew)          // 零接触开通：免密+装机+注册+线路自动匹配绑定
+		r.Get("/probes/provision/{job}", a.provisionStatus)  // 开通任务进度轮询
 		r.Post("/probes/{id}/group", a.setProbeGroup)
 		r.Post("/speedtest/run", a.runSpeedTest)
 
