@@ -30,6 +30,19 @@ step "1/6 基础环境检查"
 [[ $EUID -eq 0 ]] || { err "请以 root 运行"; exit 1; }
 ok "root 权限"
 
+# ---------- 中心公钥（可选）：NW_SSH_PUBKEY 环境变量携带时安装，
+# 实现中心服务器→本机免密 SSH（适合探针控制台直装、中心尚未能 SSH 到达时） ----------
+if [ -n "${NW_SSH_PUBKEY:-}" ]; then
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+  if grep -qxF "$NW_SSH_PUBKEY" ~/.ssh/authorized_keys; then
+    ok "中心公钥已存在（免密 SSH 就绪）"
+  else
+    echo "$NW_SSH_PUBKEY" >> ~/.ssh/authorized_keys
+    ok "已安装中心公钥，中心服务器可免密 SSH 本机"
+  fi
+fi
+
 # ---------- 探针名称：设置 OS 主机名（克隆模板必做） ----------
 # 中文等非 ASCII 名称转安全形式时会被替换成 -（如"探针-201"→"201"），
 # 纯数字主机名不合规也不易辨识：开头是数字时自动加 "probe-" 前缀（→"probe-201"）。
