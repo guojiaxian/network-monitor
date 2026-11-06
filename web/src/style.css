@@ -89,10 +89,6 @@ body {
 
 .stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
 
-/* 系统设置页内 Tab 导航（Bootstrap pills + router-link 激活态） */
-.nw-tabs .nav-link { color: #495057; padding: 6px 14px; font-size: .92rem; }
-.nw-tabs .nav-link.router-link-active { background: var(--nw-sidebar-active); color: #fff; }
-
 table.nw-table td, table.nw-table th { vertical-align: middle; }
 
 /* IP 扫描格子墙：一格一 IP，绿=在线（ping 通），灰=离线 */
