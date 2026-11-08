@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -92,19 +91,10 @@ func (a *AgentAPI) auth(next http.Handler) http.Handler {
 	})
 }
 
-// configFor 按探针分组取配置：internal=楼层宽带内网组 / external=外网服务器组
-func configFor(ctx context.Context, store *Store, probeID string) proto.ProbeConfig {
-	key := "agent_config"
-	var grp string
-	_ = store.pool.QueryRow(ctx, `SELECT COALESCE(grp,'internal') FROM probes WHERE id=$1`, probeID).Scan(&grp)
-	if grp == "external" {
-		key = "agent_config_external"
-	}
+// configFor 下发探测配置（全部探针统一使用 agent_config）
+func configFor(ctx context.Context, store *Store) proto.ProbeConfig {
 	var cfg proto.ProbeConfig
-	if err := store.GetSetting(ctx, key, &cfg); err != nil {
-		if grp == "external" {
-			return DefaultExternalProbeConfig()
-		}
+	if err := store.GetSetting(ctx, "agent_config", &cfg); err != nil {
 		return DefaultProbeConfig()
 	}
 	return cfg
@@ -113,7 +103,7 @@ func configFor(ctx context.Context, store *Store, probeID string) proto.ProbeCon
 // config 下发探测配置（探针按版本号热更新；测速/升级任务由调度器附加）
 func (a *AgentAPI) config(w http.ResponseWriter, r *http.Request) {
 	agentID := r.Header.Get("X-NW-Agent")
-	cfg := configFor(r.Context(), a.store, agentID)
+	cfg := configFor(r.Context(), a.store)
 	if a.sched != nil {
 		cfg.SpeedTask = a.sched.TaskFor(agentID)
 	}
@@ -236,5 +226,3 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 }
 
 var errNotFound = errors.New("not found")
-
-func timePtr(t time.Time) *time.Time { return &t }

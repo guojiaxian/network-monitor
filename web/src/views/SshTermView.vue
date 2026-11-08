@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-items-center mb-2">
-      <router-link to="/probes/manage" class="btn btn-sm btn-link px-0 me-2">← 返回</router-link>
+      <button type="button" class="btn btn-sm btn-outline-secondary me-2" @click="goBack(router, '/probes/manage')">← 返回</button>
       <h5 class="mb-0">网页终端 · {{ probeName }}</h5>
       <span v-if="closed" class="badge bg-secondary ms-3">已断开</span>
       <span v-else class="badge bg-success ms-3">已连接</span>
@@ -18,13 +18,15 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../api'
+import { goBack } from '../utils'
 
 const route = useRoute()
+const router = useRouter()
 const termEl = ref(null)
 const probeName = ref('')
 const sshTarget = ref('')

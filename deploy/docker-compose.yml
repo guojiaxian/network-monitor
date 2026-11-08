@@ -5,7 +5,7 @@
 services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.102.1
-    command: ["-retentionPeriod=90d", "-httpListenAddr=:8428", "-memory.allowedPercent=40"]
+    command: ["-retentionPeriod=2y", "-httpListenAddr=:8428", "-memory.allowedPercent=40"]
     volumes:
       - vmdata:/victoria-metrics-data
     restart: unless-stopped

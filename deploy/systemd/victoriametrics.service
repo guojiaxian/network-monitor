@@ -12,7 +12,7 @@ Wants=network-online.target
 Type=simple
 User=netwatch
 Group=netwatch
-ExecStart=/opt/netwatch/bin/victoria-metrics -retentionPeriod=90d -httpListenAddr=:8428 -memory.allowedPercent=40 -storageDataPath=/opt/netwatch/vmdata
+ExecStart=/opt/netwatch/bin/victoria-metrics -retentionPeriod=2y -httpListenAddr=:8428 -memory.allowedPercent=40 -storageDataPath=/opt/netwatch/vmdata
 Restart=always
 RestartSec=5
 NoNewPrivileges=yes

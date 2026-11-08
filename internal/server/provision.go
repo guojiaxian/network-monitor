@@ -28,21 +28,21 @@ import (
 
 // ProvisionJob 一次探针开通任务（内存态；中心重启后任务丢失，重试即可）
 type ProvisionJob struct {
-	ID          string   `json:"id"`
-	IP          string   `json:"ip"`
-	Name        string   `json:"name"`
-	Status      string   `json:"status"` // running / done / failed
-	Steps       []string `json:"steps"`  // 进度日志（带时间戳）
-	Err         string   `json:"err,omitempty"`
-	ProbeID     string   `json:"probe_id,omitempty"`
-	EgressIP    string   `json:"egress_ip,omitempty"`
-	LineID      int      `json:"line_id,omitempty"`
-	LineName    string   `json:"line_name,omitempty"`
-	FloorName   string   `json:"floor_name,omitempty"`
-	AutoCreated bool     `json:"auto_created,omitempty"`
-	ExpectedLineID int  `json:"expected_line_id,omitempty"` // 管理员预期的线路（装机时校验策略路由接线）
-	Warnings    []string `json:"warnings,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	IP             string    `json:"ip"`
+	Name           string    `json:"name"`
+	Status         string    `json:"status"` // running / done / failed
+	Steps          []string  `json:"steps"`  // 进度日志（带时间戳）
+	Err            string    `json:"err,omitempty"`
+	ProbeID        string    `json:"probe_id,omitempty"`
+	EgressIP       string    `json:"egress_ip,omitempty"`
+	LineID         int       `json:"line_id,omitempty"`
+	LineName       string    `json:"line_name,omitempty"`
+	FloorName      string    `json:"floor_name,omitempty"`
+	AutoCreated    bool      `json:"auto_created,omitempty"`
+	ExpectedLineID int       `json:"expected_line_id,omitempty"` // 管理员预期的线路（装机时校验策略路由接线）
+	Warnings       []string  `json:"warnings,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func (j *ProvisionJob) step(format string, args ...any) {
@@ -564,9 +564,10 @@ func (a *AdminAPI) provisionStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, job)
 }
 
-// refreshProbes POST /probes/refresh：立即刷新探针信息。
-// 探针无入站端口，指令经心跳应答下发：agent 收到后立即重探出口 IP/运营商/归属地
-// 并马上回报（≤15s + 数秒，相比 5 分钟周期大幅提前）。probe_ids 空=全部探针。
+// refreshProbes POST /probes/refresh：立即刷新探针信息 + 排程测速。
+// 探针无入站端口，出口重探指令经心跳应答下发：agent 收到后立即重探出口 IP/运营商/归属地
+// 并马上回报（≤15s + 数秒，相比 5 分钟周期大幅提前）；同时为每个目标探针排程一轮测速
+// （并行调度，约 1 分钟内随 config 轮询陆续开测）。probe_ids 空=全部探针。
 func (a *AdminAPI) refreshProbes(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProbeIDs []string `json:"probe_ids"`
@@ -584,7 +585,12 @@ func (a *AdminAPI) refreshProbes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.eng.RequestEgressRefresh(ids)
+	if a.sched != nil {
+		for _, pid := range ids {
+			a.sched.RunNow(pid)
+		}
+	}
 	a.store.WriteAudit(r.Context(), "system", "probes-refresh",
-		fmt.Sprintf("count=%d", len(ids)))
+		fmt.Sprintf("count=%d speed=1", len(ids)))
 	writeJSON(w, map[string]any{"ok": true, "count": len(ids)})
 }

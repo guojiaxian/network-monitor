@@ -1,8 +1,10 @@
 <template>
   <div>
     <div class="d-flex align-items-center mb-3">
-      <h4 class="mb-0">探针配置</h4>
-      <span class="text-secondary small ms-3">绑定线路、分组、SSH 运维与版本升级；探针健康状态在 <router-link to="/probes">探针状态</router-link> 页查看</span>
+      <div>
+        <h4 class="mb-0">探针配置</h4>
+        <div class="text-secondary small mt-1">绑定线路、SSH 运维与版本升级；探针健康状态在 <router-link to="/probes">探针状态</router-link> 页查看</div>
+      </div>
     </div>
 
     <div class="nw-card mb-3">
@@ -10,8 +12,9 @@
         <h6 class="mb-0">探针列表</h6>
         <!-- 动作按钮推到右侧并互留间距，与其他页面"标题左、动作右"的布局一致 -->
         <div class="ms-auto d-flex gap-2">
-          <button class="btn btn-sm btn-outline-primary" :disabled="refreshing" @click="refreshNow">
-            {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
+          <button class="nw-btn nw-btn-accent nw-btn-spin" :disabled="refreshing" @click="refreshNow"
+            title="命令全部探针立即重探出口 IP 并排程一轮测速（下一心跳 ≤15s 回报，约 1 分钟内开测）">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>{{ refreshing ? '下发中…' : '立即探测' }}
           </button>
           <button class="btn btn-sm btn-primary" @click="openProvision()">＋ 新建探针</button>
         </div>
@@ -20,8 +23,8 @@
       <table class="table nw-table table-sm align-middle table-fixed">
         <thead>
           <tr>
-            <th style="width:11%">探针 ID</th><th style="width:13%">名称</th><th style="width:7%">分组</th>
-            <th style="width:15%">绑定线路</th><th style="width:7%">版本</th><th style="width:10%">状态</th>
+            <th style="width:12%">探针 ID</th><th style="width:15%">名称</th>
+            <th style="width:17%">绑定线路</th><th style="width:8%">版本</th><th style="width:11%">状态</th>
             <th style="width:12%">出口源 IP</th><th style="width:13%">最后心跳</th><th style="width:12%">操作</th>
           </tr>
         </thead>
@@ -29,14 +32,13 @@
           <tr v-for="p in probes" :key="p.probe.id">
             <td><code>{{ p.probe.id.slice(0, 8) }}</code></td>
             <td>{{ p.probe.name || p.probe.hostname }}</td>
-            <td><span class="badge" :class="(p.probe.group || 'internal') === 'external' ? 'bg-success' : 'bg-primary'">{{ (p.probe.group || 'internal') === 'external' ? '外网组' : '内网组' }}</span></td>
             <td>{{ lineName(p) }}</td>
             <td>{{ p.probe.version || '—' }}<span v-if="p.probe.pending_version" class="text-warning small"> → {{ p.probe.pending_version }}</span></td>
             <td><StatusBadge :status="p.status && p.status.status || 'unknown'" /></td>
             <td><code>{{ p.probe.source_ip || '—' }}</code></td>
             <td class="small text-secondary">{{ fmtTime(p.probe.last_seen) }}</td>
             <td class="text-end">
-              <button class="btn btn-sm btn-outline-secondary" @click="openOps(p)">⚙ 编辑 / 运维</button>
+              <button class="btn btn-sm btn-outline-secondary" @click="openOps(p)">编辑 / 运维</button>
             </td>
           </tr>
           <tr v-if="!probes.length">
@@ -47,7 +49,7 @@
         </tbody>
       </table>
       <p class="text-secondary small mb-0">
-        新探针以注册令牌自动注册后出现在这里；点击「⚙ 编辑 / 运维」绑定线路、配置 SSH 凭据或执行远程操作。
+        新探针以注册令牌自动注册后出现在这里；点击「编辑 / 运维」绑定线路、配置 SSH 凭据或执行远程操作。
       </p>
     </div>
 
@@ -55,14 +57,7 @@
     <ModalBox :show="pModal.show" :title="`探针编辑 / 运维 — ${pModal.disp}`" wide @close="pModal.show = false" @ok="saveMeta">
       <div class="row g-2">
         <div class="col-md-6"><label class="form-label small mb-1">探针名称</label><input v-model="pModal.name" class="form-control form-control-sm" /></div>
-        <div class="col-md-3">
-          <label class="form-label small mb-1">分组</label>
-          <select v-model="pModal.group" class="form-select form-select-sm" title="internal=楼层内网组（绑线路）；external=外网服务器组（探测官网）">
-            <option value="internal">内网组</option>
-            <option value="external">外网组</option>
-          </select>
-        </div>
-        <div class="col-md-3" v-if="pModal.group === 'internal'">
+        <div class="col-md-6">
           <label class="form-label small mb-1">绑定线路</label>
           <select v-model.number="pModal.line_id" class="form-select form-select-sm">
             <option :value="0">未绑定</option>
@@ -81,7 +76,7 @@
           <button class="btn btn-sm btn-outline-success" :disabled="!pModal.sshConfigured" @click="sshOp('test')">测试连接</button>
           <button class="btn btn-sm btn-outline-warning" :disabled="!pModal.sshConfigured" @click="sshOp('restart-agent')">重启探针服务</button>
           <button class="btn btn-sm btn-outline-dark" :disabled="!pModal.sshConfigured" @click="sshExec()">远程命令</button>
-          <router-link :to="`/probes/${pModal.id}/term`" class="btn btn-sm btn-dark" title="网页终端">🖥 网页终端</router-link>
+          <router-link :to="`/probes/${pModal.id}/term`" class="btn btn-sm btn-dark" title="网页终端">网页终端</router-link>
           <span class="vr"></span>
           <select v-model.number="selRelease" class="form-select form-select-sm w-auto" title="选择目标版本">
             <option :value="0">升级到…</option>
@@ -122,16 +117,16 @@
         <div class="small font-monospace bg-light p-2 rounded" style="max-height:300px;overflow-y:auto;white-space:pre-wrap">{{ (pJob.job.steps || []).join('\n') }}</div>
         <div v-if="pJob.job.status === 'running'" class="text-secondary small mt-2"><span class="spinner-border spinner-border-sm me-1"></span>开通进行中，请勿关闭服务器电源…（关闭弹窗不会中断任务）</div>
         <div v-else-if="pJob.job.status === 'done'" class="text-success small mt-2">
-          🎉 开通完成！探针 <code>{{ (pJob.job.probe_id || '').slice(0,8) }}</code>
+          开通完成！探针 <code>{{ (pJob.job.probe_id || '').slice(0,8) }}</code>
           已绑定线路「{{ pJob.job.line_name }}」<span v-if="pJob.job.floor_name">（楼层：{{ pJob.job.floor_name }}）</span>
           <span v-if="pJob.job.auto_created" class="text-warning">（该线路为自动创建，可在线路配置中调整名称/契约带宽/楼层）</span>，
           出口 IP {{ pJob.job.egress_ip }}。
         </div>
         <div v-if="pJob.job && pJob.job.warnings && pJob.job.warnings.length" class="alert alert-warning py-2 px-3 small mt-2 mb-0">
-          <b>⚠ 需要确认：</b>
+          <b>需要确认：</b>
           <ul class="mb-0 ps-3"><li v-for="w in pJob.job.warnings" :key="w">{{ w }}</li></ul>
         </div>
-        <div v-else-if="pJob.job.err" class="text-danger small mt-2">❌ {{ pJob.job.err }}</div>
+        <div v-else-if="pJob.job.err" class="text-danger small mt-2">错误：{{ pJob.job.err }}</div>
       </template>
       <template #footer>
         <button class="btn btn-sm btn-outline-secondary" @click="closeProvision">{{ pJob.job && pJob.job.status === 'running' ? '后台运行，关闭' : '关闭' }}</button>
@@ -143,7 +138,7 @@
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
         <h6 class="mb-0">版本发布与升级</h6>
-        <span class="text-secondary small ms-3">上传新版探针二进制后，在探针「⚙ 编辑 / 运维」弹窗中选择版本一键升级（自动下载校验替换并重启）</span>
+        <span class="text-secondary small ms-3">上传新版探针二进制后，在探针「编辑 / 运维」弹窗中选择版本一键升级（自动下载校验替换并重启）</span>
       </div>
       <div class="row g-2 align-items-end mb-2">
         <div class="col-md-3"><label class="form-label small mb-1">版本号</label><input v-model="rel.version" class="form-control form-control-sm" placeholder="如 0.2" /></div>
@@ -202,7 +197,8 @@ async function refreshNow() {
   refreshing.value = true
   try {
     await api.post('/api/admin/probes/refresh', {})
-    setTimeout(load, 6000); setTimeout(load, 15000)
+    // 后端同时排程一轮测速（并行调度，约 1 分钟内开测）；两次补刷让出口/测速新值尽快上屏
+    setTimeout(load, 6000); setTimeout(load, 15000); setTimeout(load, 75000)
   } catch (e) { alert(e.message) }
   setTimeout(() => { refreshing.value = false }, 8000)
 }
@@ -253,22 +249,20 @@ const selVer = computed(() => {
 })
 
 function lineName(p) {
-  if ((p.probe.group || 'internal') === 'external') return '探测官网'
   const l = lines.value.find(x => x.id === p.probe.line_id)
   return l ? l.name : '未绑定'
 }
 
-// ---- 编辑/运维弹窗：名称/分组/绑定/SSH 统一"确定"保存；操作按钮在弹窗内 ----
+// ---- 编辑/运维弹窗：名称/绑定/SSH 统一"确定"保存；操作按钮在弹窗内 ----
 function openOps(p) {
   pModal.value = {
     show: true, id: p.probe.id, disp: p.probe.name || p.probe.hostname,
     name: p.probe.name || p.probe.hostname || '',
-    group: p.probe.group || 'internal',
     line_id: p.probe.line_id || 0,
     ssh_host: p.probe.ssh_host || '', ssh_port: p.probe.ssh_port || 22,
     ssh_user: p.probe.ssh_user || 'root', ssh_pass: '',
     sshConfigured: p.probe.ssh_configured,
-    origGroup: p.probe.group || 'internal', origLine: p.probe.line_id || 0,
+    origLine: p.probe.line_id || 0,
     err: '',
   }
   opMsg.value = ''
@@ -283,8 +277,7 @@ async function saveMeta() {
       ssh_port: m.ssh_port, ssh_user: m.ssh_user }
     if (m.ssh_pass) body.ssh_pass = m.ssh_pass
     await api.put(`/api/admin/probes/${m.id}/meta`, body)
-    if (m.group !== m.origGroup) await api.post(`/api/admin/probes/${m.id}/group`, { group: m.group })
-    if (m.group === 'internal' && (m.line_id || 0) !== (m.origLine || 0))
+    if ((m.line_id || 0) !== (m.origLine || 0))
       await api.post(`/api/admin/probes/${m.id}/assign`, { line_id: m.line_id || null })
     m.show = false
     await load()

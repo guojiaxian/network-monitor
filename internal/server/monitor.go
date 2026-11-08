@@ -20,33 +20,34 @@ type MonitorItem struct {
 	Type      string `json:"type"`   // tcp / http / icmp
 	Target    string `json:"target"` // tcp: host:port；http: URL；icmp: IP
 	IntervalS int    `json:"interval_s"`
+	TimeoutS  int    `json:"timeout_s,omitempty"` // 单次探测超时秒（默认 5；探测配置页可改）
 }
 
 type MonitorSettings struct {
-	Enabled  bool          `json:"enabled"`
-	Items    []MonitorItem `json:"items"`
+	Enabled bool          `json:"enabled"`
+	Items   []MonitorItem `json:"items"`
 }
 
 func DefaultMonitorSettings() MonitorSettings { return MonitorSettings{} }
 
 // MonitorStatus 单目标实时状态（总览 API）
 type MonitorStatus struct {
-	Name    string  `json:"name"`
-	Type    string  `json:"type"`
-	Target  string  `json:"target"`
-	Up      bool    `json:"up"`
-	Known   bool    `json:"known"`  // 是否已有探测结果
-	RTTms   float64 `json:"rtt_ms"`
-	Code    int     `json:"code"`   // http 状态码
-	LastTS  string  `json:"last_ts"`
+	Name   string  `json:"name"`
+	Type   string  `json:"type"`
+	Target string  `json:"target"`
+	Up     bool    `json:"up"`
+	Known  bool    `json:"known"` // 是否已有探测结果
+	RTTms  float64 `json:"rtt_ms"`
+	Code   int     `json:"code"` // http 状态码
+	LastTS string  `json:"last_ts"`
 }
 
 // MonitorRunner 内置探测器
 type MonitorRunner struct {
-	store   *Store
-	tsdb    *TSDB
-	eng     *Engine
-	log     *log.Logger
+	store *Store
+	tsdb  *TSDB
+	eng   *Engine
+	log   *log.Logger
 
 	mu      sync.Mutex
 	status  map[string]*MonitorStatus
@@ -139,6 +140,9 @@ func (m *MonitorRunner) settings(ctx context.Context) MonitorSettings {
 		if st.Items[i].IntervalS < 10 {
 			st.Items[i].IntervalS = 30
 		}
+		if st.Items[i].TimeoutS <= 0 || st.Items[i].TimeoutS > 60 {
+			st.Items[i].TimeoutS = 5
+		}
 	}
 	return st
 }
@@ -152,7 +156,7 @@ func (m *MonitorRunner) runAll(ctx context.Context, st MonitorSettings, version 
 func (m *MonitorRunner) runOne(ctx context.Context, it MonitorItem, version int) {
 	t := time.NewTicker(time.Duration(it.IntervalS) * time.Second)
 	defer t.Stop()
-	timeout := 5 * time.Second
+	timeout := time.Duration(it.TimeoutS) * time.Second
 	// 立即执行首次探测：否则首个状态要等一个完整间隔（30s）才出现，
 	// 总览页配置后近一分钟无数据显示
 	m.mu.Lock()

@@ -142,7 +142,22 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now netwatch-agent
-ok "服务已启动"
+ok "服务已启动，已设置开机自启（$(systemctl is-enabled netwatch-agent 2>/dev/null || echo unknown)）"
+
+# 控制脚本（可选）：交付包内 script/probe/ 存在时一并安装到探针
+PKG_SCRIPTS="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/script/probe"
+if [ -d "$PKG_SCRIPTS" ]; then
+  install -d -m 0755 /usr/local/sbin/netwatch-probe
+  install -m 0755 "$PKG_SCRIPTS"/lib.sh "$PKG_SCRIPTS"/start.sh \
+    "$PKG_SCRIPTS"/stop.sh "$PKG_SCRIPTS"/restart.sh "$PKG_SCRIPTS"/status.sh \
+    /usr/local/sbin/netwatch-probe/
+  if [ -e /root/netwatch-probe ] && [ ! -L /root/netwatch-probe ]; then
+    warn "/root/netwatch-probe 已存在且不是软链接，未覆盖"
+  else
+    ln -sfn /usr/local/sbin/netwatch-probe /root/netwatch-probe
+    ok "控制脚本安装至 /usr/local/sbin/netwatch-probe（快捷入口 /root/netwatch-probe）"
+  fi
+fi
 
 # ---------- 5. 注册确认 ----------
 step "5/6 注册确认（等待 30s）"

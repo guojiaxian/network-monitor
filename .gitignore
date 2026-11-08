@@ -19,3 +19,9 @@ nohup.out
 
 # 部署本地配置
 deploy/*.env
+
+# AI 工具会话计划（本地生成，不入库）
+.zcode/
+
+# 误放在 deploy 的旧探针二进制（构建产物统一放 bin/）
+deploy/netwatch-agent

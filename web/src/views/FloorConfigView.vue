@@ -1,8 +1,10 @@
 <template>
   <div>
     <div class="d-flex align-items-center mb-3">
-      <h4 class="mb-0">楼层配置</h4>
-      <span class="text-secondary small ms-3">楼层（子网）是线路归属与 IP 扫描的锚点；楼层顺序即总览/大屏展示顺序</span>
+      <div>
+        <h4 class="mb-0">楼层配置</h4>
+        <div class="text-secondary small mt-1">楼层（子网）是线路归属与 IP 扫描的锚点；楼层顺序即总览/大屏展示顺序</div>
+      </div>
     </div>
 
     <div class="nw-card mb-3">

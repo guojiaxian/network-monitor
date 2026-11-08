@@ -30,19 +30,19 @@ type Options struct {
 }
 
 type Agent struct {
-	opts   Options
-	log    *log.Logger
-	httpc  *http.Client
+	opts     Options
+	log      *log.Logger
+	httpc    *http.Client
 	stateDir string
 
 	identMu sync.RWMutex
 	ident   Identity
 
 	ipMu     sync.Mutex
-	egressIP string // 探测到的出口公网 IP（随心跳上报，中心回填线路）
-	ipISP    string // 出口 IP 归属运营商（ipip 解析）
-	ipGeo    string // 出口 IP 归属地（"中国 河南 郑州"）
-	ipV6     string // 出口 IPv6（无则空）
+	egressIP string            // 探测到的出口公网 IP（随心跳上报，中心回填线路）
+	ipISP    string            // 出口 IP 归属运营商（ipip 解析）
+	ipGeo    string            // 出口 IP 归属地（"中国 河南 郑州"）
+	ipV6     string            // 出口 IPv6（无则空）
 	sysInfo  map[string]string // 资产信息（周期开始采集一次，随心跳上报）
 
 	cfgMu    sync.RWMutex
@@ -76,7 +76,7 @@ func New(opts Options) (*Agent, error) {
 		sampleCh: make(chan proto.Sample, 4096),
 	}
 	a.loadIdentity() // 复用持久化身份：否则每次重启都会重新注册新 ID（真实踩坑：
-	                 // 重启即换 ID，旧行变盲区告警+孤儿行，绑定/名称/SSH 凭据全部丢失）
+	// 重启即换 ID，旧行变盲区告警+孤儿行，绑定/名称/SSH 凭据全部丢失）
 	return a, nil
 }
 
@@ -183,14 +183,16 @@ func (a *Agent) applyConfig(c proto.ProbeConfig, signal bool) {
 }
 
 // targetsFingerprint 影响探测循环的配置指纹
+// （心跳/出口识别间隔不入指纹：两个循环各自按 tick 比对配置自重置，无需重建探测循环）
 func targetsFingerprint(c proto.ProbeConfig) string {
-	return fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%s",
+	return fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%s|%d,%d",
 		c.Version,
 		c.SourceIP,
 		strings.Join(c.ICMPTargets, ","), strings.Join(c.TCPTargets, ","),
 		strings.Join(c.DNSServers, ","), c.DNSDomain,
 		strings.Join(c.HTTPTargets, ","),
-		fmt.Sprintf("%d,%d,%d,%d,%d", c.IntervalPingS, c.IntervalTCPS, c.IntervalDNSS, c.IntervalHTTPS, c.TimeoutS))
+		fmt.Sprintf("%d,%d,%d,%d,%d", c.IntervalPingS, c.IntervalTCPS, c.IntervalDNSS, c.IntervalHTTPS, c.TimeoutS),
+		c.RetryN, c.RetryPauseMs)
 }
 
 // sourceIPOf 返回本次探测应绑定的源 IP：配置显式指定则用之，auto 模式读周期探测缓存。

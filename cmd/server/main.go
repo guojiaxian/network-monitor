@@ -21,7 +21,7 @@ import (
 	"netwatch/internal/server"
 )
 
-var version = "dev"
+var version = "1.0.0"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -43,6 +43,8 @@ func main() {
 	tsdb := server.NewTSDB(cfg.VMURL)
 	eng := server.NewEngine(cfg, store, tsdb)
 	sched := server.NewSpeedSched(store)
+	shipper := server.NewLogShipper(cfg, store) // 日志外发（syslog → 奇安信审计服务器）
+	eng.SetShipper(shipper)
 	eng.SetSched(sched)
 	eng.Start(ctx)
 	sched.Start(ctx)
@@ -65,6 +67,10 @@ func main() {
 
 	ind := server.NewIndustryRunner(store, tsdb, eng)
 	ind.Start(ctx)
+
+	scan := server.NewScanRunner(store)
+	scan.SetShipper(shipper)
+	scan.Start(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
@@ -94,17 +100,17 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":    status,
-			"version":   cfg.Version,
-			"uptime_s":  int(time.Since(startedAt).Seconds()),
-			"checks":    map[string]bool{"db": dbOK, "vm": vmOK},
-			"time":      time.Now().Format(time.RFC3339),
+			"status":   status,
+			"version":  cfg.Version,
+			"uptime_s": int(time.Since(startedAt).Seconds()),
+			"checks":   map[string]bool{"db": dbOK, "vm": vmOK},
+			"time":     time.Now().Format(time.RFC3339),
 		})
 	})
 
 	r.Route("/api/agent", server.NewAgentAPI(cfg, store, eng, sched).Routes)
-	r.Route("/api/admin", server.NewAdminAPI(cfg, store, eng, sched, rep, mon, ind, tsdb).Routes)
-	r.Route("/api/screen", server.NewScreenAPI(store, eng, mon, ind).Routes)
+	r.Route("/api/admin", server.NewAdminAPI(cfg, store, eng, sched, rep, mon, ind, tsdb, scan).Routes)
+	r.Route("/api/screen", server.NewScreenAPI(store, eng, mon, ind, tsdb).Routes)
 
 	// 前端静态文件（web/dist 存在时挂载；SPA 路由回退到 index.html）
 	if st, err := os.Stat(cfg.WebDir); err == nil && st.IsDir() {
@@ -115,6 +121,10 @@ func main() {
 				http.ServeFile(w, req, p)
 				return
 			}
+			// index.html 只发 no-cache（要求浏览器每次回源校验 Last-Modified）：
+			// 其引用的 assets 文件名带内容哈希可长期缓存，但 index.html 若被浏览器
+			// 启发式缓存，升级后用户会一直加载旧 bundle，表现为"发布了页面没变化"。
+			w.Header().Set("Cache-Control", "no-cache")
 			http.ServeFile(w, req, index)
 		})
 		log.Printf("serving web ui from %s", cfg.WebDir)

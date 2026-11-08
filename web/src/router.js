@@ -7,9 +7,11 @@ const routes = [
   { path: '/', component: () => import('./views/DashboardView.vue'), meta: { auth: true } },
   { path: '/lines', component: () => import('./views/LinesView.vue'), meta: { auth: true } },
   { path: '/floors', component: () => import('./views/FloorConfigView.vue'), meta: { auth: true } }, // 楼层配置
+  { path: '/floors/:id', component: () => import('./views/FloorDetailView.vue'), meta: { auth: true } }, // 楼层详情：联通率+在线 IP
   { path: '/lines/:id', component: () => import('./views/LineDetailView.vue'), meta: { auth: true } },
   { path: '/probes', component: () => import('./views/ProbesStatusView.vue'), meta: { auth: true } }, // 探针状态：只读展示
   { path: '/line-status', component: () => import('./views/LineStatusView.vue'), meta: { auth: true } }, // 线路状态：各线路关键运行信息
+  { path: '/floor-status', component: () => import('./views/FloorStatusView.vue'), meta: { auth: true } }, // 楼层状态：以楼层为单位聚合网络状况
 
   { path: '/scan', component: () => import('./views/ScanView.vue'), meta: { auth: true } }, // 楼层 IP 扫描（触发为 POST，观察者会被 403）
   { path: '/probes/manage', component: () => import('./views/ProbesManageView.vue'), meta: { auth: true } }, // 探针配置：绑定/运维/升级
@@ -33,7 +35,8 @@ const routes = [
   },
   { path: '/probing', component: () => import('./views/settings/ProbeSettings.vue'), meta: { auth: true } }, // 探测配置（自系统设置拆出为一级页）
   { path: '/settings/probe', redirect: '/probing' }, // 旧深链重定向
-  { path: '/screen', component: () => import('./views/ScreenView.vue') }, // 大屏：公开只读
+  { path: '/screen', component: () => import('./views/ScreenView.vue') }, // 大屏（线路口径）：公开只读
+  { path: '/screen/floor', component: () => import('./views/ScreenView.vue') }, // 大屏（楼层口径）：同一组件按路由切换，地址可分别投屏
 ]
 
 export const router = createRouter({

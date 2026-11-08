@@ -1,14 +1,17 @@
 <template>
   <div>
     <div class="d-flex align-items-center mb-3">
-      <h4 class="mb-0">探针状态</h4>
-      <span class="text-secondary small ms-3">每 15 秒自动刷新</span>
-      <button class="btn btn-sm btn-outline-primary ms-2" :disabled="refreshing" @click="refreshNow">
-        {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
+      <div>
+        <h4 class="mb-0">探针状态</h4>
+        <div class="text-secondary small mt-1">每 15 秒自动刷新<span v-if="refreshMsg" class="text-success ms-2">{{ refreshMsg }}</span><span v-if="err" class="text-danger ms-2">{{ err }}</span></div>
+      </div>
+      <button class="nw-btn nw-btn-accent nw-btn-spin ms-auto" :disabled="refreshing" @click="refreshNow"
+        title="命令全部探针立即重探出口 IP 并排程一轮测速（下一心跳 ≤15s 回报，约 1 分钟内开测）">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>{{ refreshing ? '下发中…' : '立即探测' }}
       </button>
-      <span v-if="refreshMsg" class="text-success small ms-2">{{ refreshMsg }}</span>
-      <span v-if="err" class="text-danger small ms-3">{{ err }}</span>
-      <router-link to="/probes/manage" class="btn btn-sm btn-outline-secondary ms-auto">🛠️ 绑定 / 运维操作 → 探针配置</router-link>
+      <router-link to="/probes/manage" class="nw-btn nw-btn-neutral ms-2">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>绑定 / 运维操作 → 探针配置
+      </router-link>
     </div>
 
     <div class="nw-card mb-3">
@@ -16,9 +19,9 @@
       <table class="table nw-table table-sm align-middle table-fixed">
         <thead>
           <tr>
-            <th style="width:3.5%"></th><th style="width:15%">名称</th><th style="width:7.5%">分组</th>
-            <th style="width:11%">绑定线路</th><th style="width:8%">状态</th><th style="width:12%">自健康 (CPU/内存/磁盘)</th>
-            <th style="width:14%">出口公网 IP</th><th style="width:9.5%">出口源 IP</th><th style="width:9.5%">默认网关</th><th style="width:10%">最后心跳</th>
+            <th style="width:3.5%"></th><th style="width:17%">名称</th>
+            <th style="width:13%">绑定线路</th><th style="width:9%">状态</th><th style="width:13.5%">自健康 (CPU/内存/磁盘)</th>
+            <th style="width:15%">出口公网 IP</th><th style="width:10%">出口源 IP</th><th style="width:10%">默认网关</th><th style="width:9%">最后心跳</th>
           </tr>
         </thead>
         <tbody>
@@ -26,7 +29,6 @@
             <tr>
               <td><a href="javascript:void(0)" class="text-decoration-none" @click="toggle(p.probe.id)">{{ expanded[p.probe.id] ? '▾' : '▸' }}</a></td>
               <td><b>{{ p.probe.name || p.probe.hostname }}</b> <code class="small text-secondary" :title="p.probe.id">{{ p.probe.id.slice(0, 8) }}</code></td>
-              <td><span class="badge" :class="isExt(p) ? 'bg-success' : 'bg-primary'">{{ isExt(p) ? '外网组' : '内网组' }}</span></td>
               <td>{{ lineName(p) }}</td>
               <td><StatusBadge :status="p.status && p.status.status || 'unknown'" /></td>
               <td>
@@ -48,7 +50,7 @@
               <td class="small text-secondary">{{ fmtTime(p.probe.last_seen) }}</td>
             </tr>
             <tr v-if="expanded[p.probe.id]">
-              <td colspan="10" class="bg-light">
+              <td colspan="9" class="bg-light">
                 <div class="row g-2 small p-1">
                   <div class="col-md-6">
                     <b class="d-block mb-1">探针资产（注册时自动采集）</b>
@@ -70,14 +72,14 @@
             </tr>
           </template>
           <tr v-if="!probes.length">
-            <td colspan="10" class="text-secondary py-4 text-center">
+            <td colspan="9" class="text-secondary py-4 text-center">
               暂无探针注册。请在楼层 VM 上执行：<code>deploy/install-agent.sh http://&lt;中心IP&gt; &lt;注册令牌&gt;</code>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p class="text-secondary small">本页为只读总览；探针的绑定线路、分组、SSH 运维与版本升级请前往 <router-link to="/probes/manage">探针配置</router-link>。探针自身内存/磁盘连续超 90% 会触发 P2"探针资源紧张"告警。</p>
+    <p class="text-secondary small">本页为只读总览；探针的绑定线路、SSH 运维与版本升级请前往 <router-link to="/probes/manage">探针配置</router-link>。探针自身内存/磁盘连续超 90% 会触发 P2"探针资源紧张"告警。</p>
   </div>
 </template>
 
@@ -92,9 +94,7 @@ const expanded = reactive({})
 const refreshing = ref(false), refreshMsg = ref('')
 let timer = null
 
-const isExt = (p) => (p.probe.group || 'internal') === 'external'
 function lineName(p) {
-  if (isExt(p)) return '探测官网'
   const l = lines.value.find(x => x.id === p.probe.line_id)
   return l ? l.name : '未绑定'
 }
@@ -125,7 +125,7 @@ async function refreshNow() {
   refreshing.value = true; refreshMsg.value = ''
   try {
     await api.post('/api/admin/probes/refresh', {})
-    refreshMsg.value = '已下发：探针下一心跳（≤15s）重探出口并回报，页面加速刷新中'
+    refreshMsg.value = '已下发：探针下一心跳（≤15s）重探出口并回报，同时已排程一轮测速（约 1 分钟内开始），页面加速刷新中'
     // 30 秒内 3s 快速轮询，之后恢复 15s
     clearInterval(timer)
     let n = 10

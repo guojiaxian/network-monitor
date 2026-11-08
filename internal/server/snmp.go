@@ -18,35 +18,36 @@ import (
 // 线路 → 接口 的映射由管理员在后台配置（接口列表从设备 walk 获得）。
 
 const (
-	oidIfDescr      = "1.3.6.1.2.1.2.2.1.2"      // 接口描述
-	oidIfHCInOctets = "1.3.6.1.2.1.31.1.1.1.6"   // 64 位收字节
+	oidIfDescr       = "1.3.6.1.2.1.2.2.1.2"     // 接口描述
+	oidIfHCInOctets  = "1.3.6.1.2.1.31.1.1.1.6"  // 64 位收字节
 	oidIfHCOutOctets = "1.3.6.1.2.1.31.1.1.1.10" // 64 位发字节
 )
 
 // SnmpSettings SNMP 采集设置
 type SnmpSettings struct {
-	Enabled   bool             `json:"enabled"`
-	Device    string           `json:"device"`    // 防火墙管理 IP
-	Community string           `json:"community"` // 只读团体字
-	Port      uint16           `json:"port"`
-	IntervalS int              `json:"interval_s"` // 轮询间隔（默认 30）
-	Mappings  []SnmpMapping    `json:"mappings"`   // 线路 → 接口
+	Enabled   bool          `json:"enabled"`
+	Device    string        `json:"device"`    // 防火墙管理 IP
+	Community string        `json:"community"` // 只读团体字
+	Port      uint16        `json:"port"`
+	IntervalS int           `json:"interval_s"` // 轮询间隔（默认 30；采集与测速页可改）
+	TimeoutS  int           `json:"timeout_s"`  // 单次请求超时秒（默认 5；采集与测速页可改）
+	Mappings  []SnmpMapping `json:"mappings"`   // 线路 → 接口
 }
 
 type SnmpMapping struct {
-	LineID  int    `json:"line_id"`
+	LineID   int    `json:"line_id"`
 	LineName string `json:"line_name"`
-	IfIndex int    `json:"ifindex"`
-	IfDescr string `json:"ifdescr"`
+	IfIndex  int    `json:"ifindex"`
+	IfDescr  string `json:"ifdescr"`
 }
 
 func DefaultSnmpSettings() SnmpSettings {
-	return SnmpSettings{Port: 161, IntervalS: 30}
+	return SnmpSettings{Port: 161, IntervalS: 30, TimeoutS: 5}
 }
 
 type SnmpIface struct {
-	Index  int    `json:"index"`
-	Descr  string `json:"descr"`
+	Index int    `json:"index"`
+	Descr string `json:"descr"`
 }
 
 // SnmpPoller SNMP 流量采集器
@@ -76,19 +77,29 @@ func (s *SnmpPoller) settings(ctx context.Context) SnmpSettings {
 	if st.IntervalS < 10 {
 		st.IntervalS = 30
 	}
+	if st.TimeoutS <= 0 || st.TimeoutS > 30 {
+		st.TimeoutS = 5
+	}
 	return st
 }
 
 func (s *SnmpPoller) Start(ctx context.Context) {
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		// 轮询间隔 = snmp_settings.interval_s（此前固定 30s ticker，配置值从未被消费——已修复）；
+		// 每轮重读设置，间隔变更即按新值继续，无需重启
+		interval := 30 * time.Second
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				s.poll(ctx)
+				st := s.poll(ctx)
+				if want := time.Duration(st.IntervalS) * time.Second; want != interval {
+					interval = want
+					t.Reset(interval)
+				}
 			}
 		}
 	}()
@@ -97,7 +108,7 @@ func (s *SnmpPoller) Start(ctx context.Context) {
 func snmpConnect(st SnmpSettings) (*gosnmp.GoSNMP, error) {
 	g := &gosnmp.GoSNMP{
 		Target: st.Device, Port: st.Port, Community: st.Community,
-		Version: gosnmp.Version2c, Timeout: 5 * time.Second, Retries: 1,
+		Version: gosnmp.Version2c, Timeout: time.Duration(st.TimeoutS) * time.Second, Retries: 1,
 		MaxOids: 60,
 	}
 	if err := g.Connect(); err != nil {
@@ -135,16 +146,17 @@ func Ifaces(st SnmpSettings) ([]SnmpIface, error) {
 	return out, err
 }
 
-// poll 一轮采集：GET 全部映射接口的收发计数 → 差分 → 入 VM
-func (s *SnmpPoller) poll(ctx context.Context) {
+// poll 一轮采集：GET 全部映射接口的收发计数 → 差分 → 入 VM。
+// 返回本轮使用的设置（Start 依据其中的 IntervalS 重置下一轮 ticker）。
+func (s *SnmpPoller) poll(ctx context.Context) SnmpSettings {
 	st := s.settings(ctx)
 	if !st.Enabled || len(st.Mappings) == 0 || st.Device == "" {
-		return
+		return st
 	}
 	g, err := snmpConnect(st)
 	if err != nil {
 		s.log.Printf("connect %s: %v", st.Device, err)
-		return
+		return st
 	}
 	defer g.Conn.Close()
 
@@ -157,7 +169,7 @@ func (s *SnmpPoller) poll(ctx context.Context) {
 	res, err := g.Get(oids)
 	if err != nil {
 		s.log.Printf("get: %v", err)
-		return
+		return st
 	}
 	now := time.Now()
 	vals := map[int][2]uint64{} // ifindex → [in,out]
@@ -224,6 +236,7 @@ func (s *SnmpPoller) poll(ctx context.Context) {
 			s.log.Printf("tsdb: %v", err)
 		}
 	}
+	return st
 }
 
 // rateBps 计数器差分 → 比特每秒（32 位计数器回绕：cur < prev 时按回绕补差；64 位回绕概率极低按 0 处理）

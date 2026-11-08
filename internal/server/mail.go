@@ -110,20 +110,17 @@ func alertEmailHTML(cfg *Config, a AlertMeta, firing bool, extra string) string 
 		link = fmt.Sprintf(`<p style="margin-top:16px"><a href="%s/">→ 前往管理后台查看</a></p>`, cfg.BaseURL)
 	}
 	action := map[string]string{
-		KindLineDown:   "线路中断：请拨打线路商报障电话，并核对防火墙对应出口状态。",
-		KindFloorDown:  "楼层中断：楼层网关不可达，多为楼内接入交换机/网关故障，请检查楼内设备。",
-		KindBlind:      "监控盲区：探针失联，无法监测该楼层。请检查探针虚拟机运行状态；若为计划内维护请设置静默窗口。",
-		KindDegraded:   "线路降质：丢包或时延持续偏高，建议先观察再报障。",
-		KindConflict:   "探针数据冲突：部分探针报中断但其余正常，线路大概率正常，请优先检查报中断探针的运行状态与位置。",
-		KindSiteDown:   "网站从外网不可达：全部外网探针均无法访问，对互联网用户网站大概率已不可用——请立即检查 Web 服务、防火墙公网映射与出口线路。",
-		KindSiteConf:   "外网探针数据冲突：部分外网探针报网站不可达，请优先检查异常探针服务器自身的网络。",
-		KindCertExpire: "HTTPS 证书即将过期：请尽快在证书签发机构续签并更新到 Web 服务器。",
+		KindLineDown:  "线路中断：请拨打线路商报障电话，并核对防火墙对应出口状态。",
+		KindFloorDown: "楼层中断：楼层网关不可达，多为楼内接入交换机/网关故障，请检查楼内设备。",
+		KindBlind:     "监控盲区：探针失联，无法监测该楼层。请检查探针虚拟机运行状态；若为计划内维护请设置静默窗口。",
+		KindDegraded:  "线路降质：丢包或时延持续偏高，建议先观察再报障。",
+		KindConflict:  "探针数据冲突：部分探针报中断但其余正常，线路大概率正常，请优先检查报中断探针的运行状态与位置。",
 	}[a.Kind]
 
 	return fmt.Sprintf(`<!DOCTYPE html><html><body style="font-family: -apple-system,'Segoe UI','Microsoft YaHei',sans-serif;max-width:640px;margin:0 auto;padding:16px">
 <div style="border-left:4px solid %s;padding:12px 16px;background:#f7f7f7">
 <h2 style="margin:0 0 8px">%s %s</h2>
-<p style="color:#666;margin:0">网络监控系统 NetWatch · %s</p>
+<p style="color:#666;margin:0">物探中心网络监控系统（NetWatch）· %s</p>
 </div>
 <table style="border-collapse:collapse;margin-top:16px;width:100%%" cellpadding="6">
 <tr><td style="%s">级别</td><td>%s</td></tr>
@@ -135,7 +132,7 @@ func alertEmailHTML(cfg *Config, a AlertMeta, firing bool, extra string) string 
 </table>
 <p style="margin-top:16px">%s</p>
 %s
-<p style="color:#999;font-size:12px;margin-top:24px">本邮件由 NetWatch 网络监控系统自动发送，请勿直接回复。</p>
+<p style="color:#999;font-size:12px;margin-top:24px">本邮件由物探中心网络监控系统（NetWatch）自动发送，请勿直接回复。</p>
 </body></html>`,
 		color, state, a.Title, time.Now().Format("2006-01-02 15:04:05"),
 		tdStyle, a.Severity,

@@ -3,10 +3,10 @@
     <div class="nw-card mb-3">
       <h6>告警阈值与收件组</h6>
       <div class="row g-2">
-        <div class="col-md-3"><label class="form-label small mb-1">盲区判定（秒）</label><input v-model.number="als.blind_secs" type="number" class="form-control form-control-sm" /></div>
-        <div class="col-md-3"><label class="form-label small mb-1">中断判定窗口（秒）</label><input v-model.number="als.line_down_secs" type="number" class="form-control form-control-sm" /></div>
-        <div class="col-md-3"><label class="form-label small mb-1">降质丢包阈值（%）</label><input v-model.number="als.loss_pct_thresh" type="number" class="form-control form-control-sm" /></div>
-        <div class="col-md-3"><label class="form-label small mb-1">降质统计窗口（分钟）</label><input v-model.number="als.loss_window_min" type="number" class="form-control form-control-sm" /></div>
+        <div class="col-md-3"><label class="form-label small mb-1">盲区判定（秒）</label><input v-model.number="als.blind_secs" type="number" min="30" max="3600" class="form-control form-control-sm" /></div>
+        <div class="col-md-3"><label class="form-label small mb-1">中断判定窗口（秒）</label><input v-model.number="als.line_down_secs" type="number" min="5" max="3600" class="form-control form-control-sm" /></div>
+        <div class="col-md-3"><label class="form-label small mb-1">降质丢包阈值（%）</label><input v-model.number="als.loss_pct_thresh" type="number" min="1" max="100" step="0.1" class="form-control form-control-sm" /></div>
+        <div class="col-md-3"><label class="form-label small mb-1">降质统计窗口（分钟）</label><input v-model.number="als.loss_window_min" type="number" min="1" max="60" class="form-control form-control-sm" /></div>
         <div class="col-md-8"><label class="form-label small mb-1">P2 收件组（逗号分隔，留空用默认收件人）</label><input v-model="alsP2Str" class="form-control form-control-sm" /></div>
         <div class="col-md-8"><label class="form-label small mb-1">P0/P1 收件组（逗号分隔，留空用默认收件人）</label><input v-model="alsP0P1Str" class="form-control form-control-sm" /></div>
         <div class="col-md-4 text-end align-self-end"><button class="btn btn-sm btn-primary" @click="saveALS">保存</button></div>
@@ -68,6 +68,11 @@ function openSilence() { Object.assign(silModal, { show: true, line_id: 0, hours
 
 const fmt = fmtTime
 
+function num(v, lo, hi, dft) {
+  const x = Number(v)
+  return Number.isFinite(x) && x >= lo && x <= hi ? x : dft
+}
+
 async function load() {
   const s = await api.get('/api/admin/settings')
   als.value = s.alert_settings || {}
@@ -82,6 +87,10 @@ async function saveALS() {
   alsMsg.value = ''; alsOk.value = false
   try {
     const a = { ...als.value,
+      blind_secs: num(als.value.blind_secs, 30, 3600, 60),
+      line_down_secs: num(als.value.line_down_secs, 5, 3600, 30),
+      loss_pct_thresh: num(als.value.loss_pct_thresh, 1, 100, 10),
+      loss_window_min: num(als.value.loss_window_min, 1, 60, 5),
       notify_to_p0p1: parseCSV(alsP0P1Str.value),
       notify_to_p2: parseCSV(alsP2Str.value),
     }

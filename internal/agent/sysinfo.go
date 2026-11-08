@@ -145,7 +145,7 @@ func collectSysInfo(stateDir string) map[string]string {
 		si["mem_total_mb"] = strconv.Itoa(int(totalKB / 1024))
 	}
 	if st, err := statfs(stateDir); err == nil {
-		si["disk_total_gb"] = strconv.Itoa(int(st.blocks*uint64(st.bsize) / (1 << 30)))
+		si["disk_total_gb"] = strconv.Itoa(int(st.blocks * uint64(st.bsize) / (1 << 30)))
 		si["disk_used_gb"] = strconv.Itoa(int((st.blocks - st.bfree) * uint64(st.bsize) / (1 << 30)))
 	}
 	si["kernel"] = kernelRelease()

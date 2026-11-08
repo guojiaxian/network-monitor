@@ -1,10 +1,11 @@
 # 中心端 systemd 服务单元（原生部署，无 Docker）
 # 安装位置：/etc/systemd/system/netwatch-server.service
-# 前置：PostgreSQL 与 VictoriaMetrics 已按 deploy/README-部署手册.md 就绪
+# 说明：正式部署由 deploy/install-server.sh 生成（随机口令/注册令牌写入单元），本文件为等价样例。
+#       生产监听 :80 需要 CAP_NET_BIND_SERVICE；中心 ICMP ping 探测需要 CAP_NET_RAW。
 [Unit]
 Description=NetWatch center server
 After=network-online.target postgresql.service victoriametrics.service
-Wants=network-online.target
+Wants=network-online.target postgresql.service victoriametrics.service
 
 [Service]
 Type=simple
@@ -18,11 +19,13 @@ Environment=NW_ENROLL_TOKEN=change-me-enroll-token
 Environment=NW_BASE_URL=
 Environment=NW_WEB_DIR=/opt/netwatch/web/dist
 Environment=NW_DATA_DIR=/opt/netwatch/data
+# 零接触开通下发给探针的中心 SSH 公钥（文件不存在时该功能自动跳过）
+Environment=NW_SSH_PUBKEY_FILE=/opt/netwatch/.ssh-center.pub
 ExecStart=/opt/netwatch/bin/netwatch-server
 Restart=always
 RestartSec=5
-AmbientCapabilities=CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

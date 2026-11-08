@@ -22,6 +22,7 @@ type IndustryItem struct {
 	Name      string `json:"name"`
 	Target    string `json:"target"` // IP 地址
 	IntervalS int    `json:"interval_s"`
+	TimeoutS  int    `json:"timeout_s,omitempty"` // 单次 ping 超时秒（默认 5；探测配置页可改）
 }
 
 type IndustrySettings struct {
@@ -43,10 +44,10 @@ type IndustryStatus struct {
 
 // IndustryRunner 行业网监测器
 type IndustryRunner struct {
-	store   *Store
-	tsdb    *TSDB
-	eng     *Engine
-	log     *log.Logger
+	store *Store
+	tsdb  *TSDB
+	eng   *Engine
+	log   *log.Logger
 
 	mu      sync.Mutex
 	status  map[string]*IndustryStatus
@@ -139,6 +140,9 @@ func (r *IndustryRunner) settings(ctx context.Context) IndustrySettings {
 		if st.Items[i].IntervalS < 10 {
 			st.Items[i].IntervalS = 30
 		}
+		if st.Items[i].TimeoutS <= 0 || st.Items[i].TimeoutS > 60 {
+			st.Items[i].TimeoutS = 5
+		}
 	}
 	return st
 }
@@ -152,7 +156,7 @@ func (r *IndustryRunner) runAll(ctx context.Context, st IndustrySettings, versio
 func (r *IndustryRunner) runOne(ctx context.Context, it IndustryItem, version int) {
 	t := time.NewTicker(time.Duration(it.IntervalS) * time.Second)
 	defer t.Stop()
-	timeout := 5 * time.Second
+	timeout := time.Duration(it.TimeoutS) * time.Second
 	// 立即执行首次探测：否则首个状态要等一个完整间隔才出现
 	r.mu.Lock()
 	cur := r.version
@@ -256,6 +260,9 @@ func ValidateIndustrySettings(st *IndustrySettings) error {
 		seen[it.Name] = true
 		if it.IntervalS < 10 {
 			it.IntervalS = 30
+		}
+		if it.TimeoutS <= 0 || it.TimeoutS > 60 {
+			it.TimeoutS = 5
 		}
 		out = append(out, it)
 	}

@@ -53,12 +53,12 @@ func startTestSSHServer(t *testing.T, user, pass string) (addr string, stop func
 				go ssh.DiscardRequests(reqs)
 				for ch := range chans {
 					if ch.ChannelType() != "session" {
-					_ = ch.Reject(ssh.UnknownChannelType, "session only")
-					continue
+						_ = ch.Reject(ssh.UnknownChannelType, "session only")
+						continue
+					}
+					go handleSession(ch)
 				}
-				go handleSession(ch)
-			}
-			_ = sconn.Close()
+				_ = sconn.Close()
 			}(conn)
 		}
 	}()

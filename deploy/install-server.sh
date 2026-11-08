@@ -161,7 +161,7 @@ cat > /tmp/netwatch-server.service <<UNIT
 [Unit]
 Description=NetWatch center server
 After=network-online.target postgresql.service victoriametrics.service
-Wants=network-online.target
+Wants=network-online.target postgresql.service victoriametrics.service
 
 [Service]
 Type=simple

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +14,28 @@ import (
 )
 
 // 探测实现均支持绑定源 IP，确保流量经策略路由从本楼层线路出站。
+
+// probeRetryPause 重试前短暂等待（给瞬时拥塞/丢包恢复留出间隔）。
+const probeRetryPause = 300 * time.Millisecond
+
+// probeRetry 探测重试包装：失败后短暂等待重试，任一次成功即成功（返回成功那次的值），
+// 连续失败才判断连（返回最后一次错误）——偶发丢包/瞬时抖动不产生失败样本。
+// 重试次数与等待间隔来自下发的探测配置（agent_config.retry_n / retry_pause_ms，
+// 缺省/越界由调用方回退到 1 次 / probeRetryPause）。调用方主动取消（context.Canceled）不重试。
+func probeRetry(retries int, pause time.Duration, fn func() (float64, bool, error)) (float64, bool, error) {
+	rtt, ok, err := fn()
+	for i := 0; !ok && i < retries; i++ {
+		if errors.Is(err, context.Canceled) {
+			return rtt, ok, err
+		}
+		if pause <= 0 {
+			pause = probeRetryPause
+		}
+		time.Sleep(pause)
+		rtt, ok, err = fn()
+	}
+	return rtt, ok, err
+}
 
 // pingOnce 发一个 ICMP 包。target 为 IP 或可解析主机名。
 func pingOnce(ctx context.Context, target, sourceIP string, timeout time.Duration) (rttMs float64, ok bool, err error) {
@@ -49,12 +72,22 @@ func tcpOnce(ctx context.Context, target, sourceIP string, timeout time.Duration
 	return rtt, true, nil
 }
 
+// ensurePort53 DNS 服务器地址补标准端口：Go 的 Dial 地址必须为 host:port，
+// 配置中的 "223.5.5.5" 直拨会报 missing port in address（2026-11-07 实测 DNS 探测 100% 失败的根因）。
+func ensurePort53(server string) string {
+	if _, _, err := net.SplitHostPort(server); err != nil {
+		return server + ":53"
+	}
+	return server
+}
+
 // dnsOnce 向指定 DNS 服务器解析测试域名。
 func dnsOnce(ctx context.Context, server, domain, sourceIP string, timeout time.Duration) (rttMs float64, ok bool, err error) {
 	d := &net.Dialer{Timeout: timeout}
 	if ip := net.ParseIP(sourceIP); ip != nil {
 		d.LocalAddr = &net.UDPAddr{IP: ip}
 	}
+	server = ensurePort53(server)
 	r := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -78,11 +111,11 @@ func httpOnce(ctx context.Context, targetURL, sourceIP string, timeout time.Dura
 	}
 	var tlsConn *tls.Conn
 	transport := &http.Transport{
-		DialContext:         d.DialContext,
-		TLSHandshakeTimeout: timeout,
+		DialContext:           d.DialContext,
+		TLSHandshakeTimeout:   timeout,
 		ResponseHeaderTimeout: timeout,
-		DisableKeepAlives:   true,
-		Proxy:               nil, // 探针直连，不走系统代理
+		DisableKeepAlives:     true,
+		Proxy:                 nil, // 探针直连，不走系统代理
 		// 自定义 TLS 拨号：不校验证书（仅测可达性），但读取对端证书计算剩余天数
 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			raw, err := d.DialContext(ctx, network, addr)
@@ -100,8 +133,8 @@ func httpOnce(ctx context.Context, targetURL, sourceIP string, timeout time.Dura
 		},
 	}
 	client := &http.Client{
-		Timeout: timeout,
-		Transport: transport,
+		Timeout:       timeout,
+		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 

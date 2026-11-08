@@ -177,15 +177,21 @@ func buf_write(b *bytes.Buffer, metric string, labels [][2]string, v float64, ts
 	p.render(b)
 }
 
-// vmSeries VM 即时查询返回的一条序列
-type vmSeries struct {
-	Metric map[string]string `json:"metric"`
-	Value  []any             `json:"value"` // [ts, "value"]
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
-// Query 执行即时查询，返回 (line标签 → 值)。仅用于报表统计（表达式按 line 聚合）。
-func (t *TSDB) QueryByLine(ctx context.Context, query string) (map[string]float64, error) {
-	u := t.baseURL + "/api/v1/query?query=" + url.QueryEscape(query)
+// QueryRange VM 范围查询（/api/v1/query_range），start/end 为 Unix 秒，stepSec 为步长秒。
+// 报表统计用：表达式内自带子窗口聚合（如 avg_over_time(...[5m])），调用方对返回序列做二次聚合。
+func (t *TSDB) QueryRange(ctx context.Context, query string, start, end, stepSec int64) ([]ExportSeries, error) {
+	if stepSec < 1 {
+		stepSec = 1
+	}
+	u := fmt.Sprintf("%s/api/v1/query_range?query=%s&start=%d&end=%d&step=%d",
+		t.baseURL, url.QueryEscape(query), start, end, stepSec)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -195,38 +201,64 @@ func (t *TSDB) QueryByLine(ctx context.Context, query string) (map[string]float6
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	var parsed struct {
 		Status string `json:"status"`
 		Data   struct {
-			Result []vmSeries `json:"result"`
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Values [][]any           `json:"values"` // 每点 [ts, "value"]
+			} `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("vm query parse: %w", err)
+		return nil, fmt.Errorf("vm query_range parse: %w", err)
 	}
 	if parsed.Status != "success" {
-		return nil, fmt.Errorf("vm query failed: %s", string(body[:min(len(body), 200)]))
+		return nil, fmt.Errorf("vm query_range failed: %s", string(body[:min(len(body), 200)]))
 	}
-	out := map[string]float64{}
+	out := []ExportSeries{}
 	for _, r := range parsed.Data.Result {
-		line := r.Metric["line"]
-		if line == "" || len(r.Value) < 2 {
-			continue
+		s := ExportSeries{Metric: r.Metric}
+		for _, p := range r.Values {
+			if len(p) < 2 {
+				continue
+			}
+			ts, ok1 := vmToTS(p[0])
+			v, ok2 := vmToFloat(p[1])
+			if !ok1 || !ok2 {
+				continue
+			}
+			s.Timestamps = append(s.Timestamps, ts)
+			s.Values = append(s.Values, v)
 		}
-		v, err := strconv.ParseFloat(fmt.Sprint(r.Value[1]), 64)
-		if err == nil {
-			out[line] = v
+		if len(s.Values) > 0 {
+			out = append(out, s)
 		}
 	}
 	return out, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func vmToTS(v any) (int64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int64(x), true
+	case string:
+		n, err := strconv.ParseInt(x, 10, 64)
+		return n, err == nil
 	}
-	return b
+	return 0, false
+}
+
+func vmToFloat(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case string:
+		f, err := strconv.ParseFloat(x, 64)
+		return f, err == nil
+	}
+	return 0, false
 }
 
 // ExportSeries VM /api/v1/export 返回的一条原始序列（values 与 timestamps 平行）
@@ -254,7 +286,8 @@ func (t *TSDB) Export(ctx context.Context, match string, start, end int64) ([]Ex
 	}
 	out := []ExportSeries{}
 	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 256*1024), 8<<20)
+	// 单行上限 64MB：31 天窗口的单序列 NDJSON 行约 6MB，8MB 上限会被静默跳过丢数据
+	sc.Buffer(make([]byte, 256*1024), 64<<20)
 	for sc.Scan() {
 		var s ExportSeries
 		if json.Unmarshal(sc.Bytes(), &s) == nil && len(s.Values) > 0 {
@@ -262,4 +295,42 @@ func (t *TSDB) Export(ctx context.Context, match string, start, end int64) ([]Ex
 		}
 	}
 	return out, sc.Err()
+}
+
+// LabelValues 枚举匹配序列的某标签取值（VM /api/v1/label/<label>/values，
+// 探测历史页目标/监控项下拉数据源；match[] 为完整选择器，可为多个）
+func (t *TSDB) LabelValues(ctx context.Context, label string, matches []string) ([]string, error) {
+	u, err := url.Parse(t.baseURL + "/api/v1/label/" + url.PathEscape(label) + "/values")
+	if err != nil {
+		return nil, err
+	}
+	qs := u.Query()
+	for _, m := range matches {
+		qs.Add("match[]", m)
+	}
+	u.RawQuery = qs.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := t.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("vm label values: %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Status string   `json:"status"`
+		Data   []string `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out.Data, nil
 }

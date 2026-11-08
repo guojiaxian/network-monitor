@@ -34,15 +34,21 @@ func (a *Agent) probeLoops(ctx context.Context) {
 		if timeout <= 0 {
 			timeout = 3 * time.Second
 		}
-
-		gw := ""
-		if !cfg.SkipGateway {
-			gw = detectGateway()
+		// 重试次数/间隔来自下发的探测配置（旧中心缺省=0 时回退 1 次 / 300ms，字段只增兼容）
+		retries := cfg.RetryN
+		if retries <= 0 {
+			retries = 1
 		}
+		retryPause := time.Duration(cfg.RetryPauseMs) * time.Millisecond
+		if retryPause <= 0 {
+			retryPause = probeRetryPause
+		}
+
+		gw := detectGateway()
 		if gw != "" {
 			g := gw
 			launch(pingInterval(cfg), func(c context.Context) *proto.Sample {
-				return a.doPing(c, g, true, timeout)
+				return a.doPing(c, g, true, timeout, retries, retryPause)
 			})
 		} else {
 			a.log.Printf("warning: default gateway not detected, gateway probe disabled")
@@ -50,13 +56,15 @@ func (a *Agent) probeLoops(ctx context.Context) {
 		for _, t := range cfg.ICMPTargets {
 			t := t
 			launch(pingInterval(cfg), func(c context.Context) *proto.Sample {
-				return a.doPing(c, t, false, timeout)
+				return a.doPing(c, t, false, timeout, retries, retryPause)
 			})
 		}
 		for _, t := range cfg.TCPTargets {
 			t := t
 			launch(tcpInterval(cfg), func(c context.Context) *proto.Sample {
-				rtt, ok, err := tcpOnce(c, t, a.sourceIPOf(cfg), timeout)
+				rtt, ok, err := probeRetry(retries, retryPause, func() (float64, bool, error) {
+					return tcpOnce(c, t, a.sourceIPOf(cfg), timeout)
+				})
 				s := &proto.Sample{Type: proto.TypeTCP, Target: t, TS: nowMs(), OK: ok, RTTms: rtt}
 				if err != nil {
 					s.Extra = map[string]float64{"err": 1}
@@ -67,7 +75,9 @@ func (a *Agent) probeLoops(ctx context.Context) {
 		for _, s := range cfg.DNSServers {
 			s := s
 			launch(dnsInterval(cfg), func(c context.Context) *proto.Sample {
-				rtt, ok, err := dnsOnce(c, s, cfg.DNSDomain, a.sourceIPOf(cfg), timeout)
+				rtt, ok, err := probeRetry(retries, retryPause, func() (float64, bool, error) {
+					return dnsOnce(c, s, cfg.DNSDomain, a.sourceIPOf(cfg), timeout)
+				})
 				sm := &proto.Sample{Type: proto.TypeDNS, Target: s, TS: nowMs(), OK: ok, RTTms: rtt}
 				if err != nil {
 					sm.Extra = map[string]float64{"err": 1}
@@ -78,7 +88,13 @@ func (a *Agent) probeLoops(ctx context.Context) {
 		for _, u := range cfg.HTTPTargets {
 			u := u
 			launch(httpInterval(cfg), func(c context.Context) *proto.Sample {
-				ttfb, code, ok, certDays, _ := httpOnce(c, u, a.sourceIPOf(cfg), timeout)
+				var code int
+				var certDays float64
+				ttfb, ok, _ := probeRetry(retries, retryPause, func() (float64, bool, error) {
+					v, c2, o, d, err := httpOnce(c, u, a.sourceIPOf(cfg), timeout)
+					code, certDays = c2, d // 重试成功那次为准（失败时零值，样本不引用）
+					return v, o, err
+				})
 				sm := &proto.Sample{Type: proto.TypeHTTP, Target: u, TS: nowMs(), OK: ok, RTTms: ttfb}
 				if ok {
 					sm.Extra = map[string]float64{"code": float64(code)}
@@ -148,9 +164,11 @@ func (a *Agent) probeLoop(ctx context.Context, interval time.Duration, fn func(c
 	}
 }
 
-func (a *Agent) doPing(ctx context.Context, target string, isGW bool, timeout time.Duration) *proto.Sample {
+func (a *Agent) doPing(ctx context.Context, target string, isGW bool, timeout time.Duration, retries int, retryPause time.Duration) *proto.Sample {
 	src := a.autoSource()
-	rtt, ok, err := pingOnce(ctx, target, src, timeout)
+	rtt, ok, err := probeRetry(retries, retryPause, func() (float64, bool, error) {
+		return pingOnce(ctx, target, src, timeout)
+	})
 	s := &proto.Sample{Type: proto.TypePing, Target: target, TS: nowMs(), OK: ok, RTTms: rtt}
 	if ok {
 		s.LossPct = 0
@@ -172,9 +190,21 @@ func (a *Agent) doPing(ctx context.Context, target string, isGW bool, timeout ti
 	return s
 }
 
+// heartbeatInterval 心跳间隔（agent_config.heartbeat_sec，缺省/越界回退 15s；下限 5s 防误配打爆中心）
+func (a *Agent) heartbeatInterval() time.Duration {
+	sec := a.currentConfig().HeartbeatSec
+	if sec < 5 || sec > 60 {
+		sec = 15
+	}
+	return time.Duration(sec) * time.Second
+}
+
 // heartbeatLoop 心跳：同时驱动中心端"监控盲区"判定。
+// 心跳间隔来自下发的探测配置（agent_config.heartbeat_sec，缺省 15s），
+// 每轮发送后与当前周期比对，配置变更即时重置节奏（无需重启探针）。
 func (a *Agent) heartbeatLoop(ctx context.Context) {
-	t := time.NewTicker(15 * time.Second)
+	interval := a.heartbeatInterval()
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	var cpuPrev [2]uint64 // 上次心跳的 CPU 累计节拍（idle, total），差分算使用率
 	for {
@@ -182,6 +212,10 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			if want := a.heartbeatInterval(); want != interval {
+				interval = want
+				t.Reset(interval)
+			}
 			mem, load := readMemLoad()
 			cpuPct, memPct, diskPct := readSelfHealth(&cpuPrev)
 			isp, geo, ipv6 := a.egressExtras()

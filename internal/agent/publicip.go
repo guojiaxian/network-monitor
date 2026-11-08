@@ -15,10 +15,10 @@ import (
 
 // 内置回显服务（2026-11-05 现场实测自该类线路可达；依次尝试，任一成功即止）
 var defaultIPEchoURLs = []string{
-	"http://ip.3322.net",                  // 纯文本 IP
+	"http://ip.3322.net",                   // 纯文本 IP
 	"http://members.3322.org/dyndns/getip", // 纯文本 IP
-	"https://v4.ident.me",                 // 纯文本 IPv4
-	"https://myip.ipip.net",               // "当前 IP：x.x.x.x  来自于：中国 …"
+	"https://v4.ident.me",                  // 纯文本 IPv4
+	"https://myip.ipip.net",                // "当前 IP：x.x.x.x  来自于：中国 …"
 }
 
 // IPv4 提取需带边界（前后非数字非点）：否则 "999.1.1.1" 会截出 "99.1.1.1"（单测实测踩坑）
@@ -37,11 +37,13 @@ func (a *Agent) egressExtras() (isp, geo, ipv6 string) {
 	return a.ipISP, a.ipGeo, a.ipV6
 }
 
-// publicIPLoop 周期刷新出口信息（立即一次 + 每 5 分钟）：
-// 公网 IPv4（心跳回填线路）→ 归属运营商/地区（ipip 全文解析）→ IPv6（尽力探测）
+// publicIPLoop 周期刷新出口信息（立即一次 + 每 N 分钟，间隔来自 agent_config.egress_min，
+// 缺省 5 分钟）：公网 IPv4（心跳回填线路）→ 归属运营商/地区（ipip 全文解析）→ IPv6（尽力探测）。
+// 配置变更即时重置节奏（无需重启探针）。
 func (a *Agent) publicIPLoop(ctx context.Context) {
 	a.refreshEgress(ctx)
-	t := time.NewTicker(5 * time.Minute)
+	interval := a.egressInterval()
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
@@ -49,8 +51,21 @@ func (a *Agent) publicIPLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			a.refreshEgress(ctx)
+			if want := a.egressInterval(); want != interval {
+				interval = want
+				t.Reset(interval)
+			}
 		}
 	}
+}
+
+// egressInterval 出口识别间隔（agent_config.egress_min，缺省/越界回退 5min）
+func (a *Agent) egressInterval() time.Duration {
+	m := a.currentConfig().EgressMin
+	if m < 1 || m > 60 {
+		m = 5
+	}
+	return time.Duration(m) * time.Minute
 }
 
 func (a *Agent) refreshEgress(ctx context.Context) {

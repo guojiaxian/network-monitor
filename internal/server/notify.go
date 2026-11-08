@@ -95,7 +95,7 @@ func alertMarkdown(meta AlertMeta, firing bool) string {
 			head = "🟡 **P2 告警**"
 		}
 	}
-	return fmt.Sprintf("%s\n\n**%s**\n\n线路：%s　楼层：%s\n\n出口 IP：%s\n\n开始时间：%s\n\n—— NetWatch 网络监控系统",
+	return fmt.Sprintf("%s\n\n**%s**\n\n线路：%s　楼层：%s\n\n出口 IP：%s\n\n开始时间：%s\n\n—— 物探中心网络监控系统（NetWatch）",
 		head, meta.Title, meta.LineName, meta.Floor, meta.PublicIP,
 		meta.StartsAt.Format("2006-01-02 15:04:05"))
 }

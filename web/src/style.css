@@ -11,6 +11,9 @@ body {
   font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
 }
 
+/* 管理页预留滚动条槽位（App.vue 按布局挂类）：内容高度变化导致滚动条出现/消失时，页面不再整体横移 15px */
+html.nw-gutter { scrollbar-gutter: stable; }
+
 .nw-layout { display: flex; min-height: 100vh; }
 
 .nw-sidebar {
@@ -21,9 +24,11 @@ body {
   box-shadow: inset -1px 0 0 rgba(23, 69, 111, .10);
 }
 .nw-sidebar .brand {
-  color: #17456f; font-weight: 700; font-size: 1.05rem;
-  padding: 8px 12px 16px; letter-spacing: .5px;
+  color: #17456f; font-weight: 700; font-size: .95rem; /* 中文名为主标题，10 字需在 176px 内单行 */
+  padding: 8px 12px 16px; letter-spacing: .3px; line-height: 1.25;
 }
+/* 英文名（副行，副标题层级） */
+.nw-sidebar .brand-en { font-size: .7rem; font-weight: 500; color: #7f9cc0; letter-spacing: .4px; margin-top: 3px; }
 .nw-sidebar a {
   color: var(--nw-sidebar-text); text-decoration: none; padding: 10px 12px;
   border-radius: 8px; display: flex; align-items: center; gap: 8px;
@@ -35,14 +40,6 @@ body {
   font-size: .72rem; letter-spacing: 2px; color: #7f9cc0;
   padding: 12px 12px 4px; border-top: 1px solid rgba(23, 69, 111, .12);
   margin-top: 10px;
-}
-/* 二级菜单（系统设置子页）：缩进小字号，父项带展开箭头 */
-.nw-sidebar .nw-nav-parent::after {
-  content: '▾'; margin-left: auto; font-size: .68rem; opacity: .55;
-}
-.nw-sidebar .nw-submenu { display: flex; flex-direction: column; margin: 2px 0 4px; }
-.nw-sidebar .nw-submenu a {
-  padding: 7px 12px 7px 36px; font-size: .86rem; margin-bottom: 1px;
 }
 .nw-sidebar .foot { margin-top: auto; font-size: .75rem; color: #8aa8c9; padding: 8px 12px; }
 
@@ -63,7 +60,22 @@ body {
 .nw-crumb-page { font-weight: 600; color: #1d2635; }
 .nw-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
 .nw-screen-btn { white-space: nowrap; }
-.nw-user { display: flex; align-items: center; gap: 8px; }
+.nw-user-wrap { position: relative; }
+.nw-user { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; border-radius: 10px; padding: 3px 8px; }
+.nw-user:hover { background: #f2f4f7; }
+.nw-caret { font-size: .7rem; color: #98a2ae; }
+.nw-user-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); min-width: 150px;
+  background: #fff; border: 1px solid #e8eaee; border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16,24,40,.12); padding: 6px; z-index: 1050;
+}
+.nw-user-menu-role { font-size: .78rem; color: #98a2ae; padding: 4px 10px 6px; border-bottom: 1px solid #f0f2f5; margin-bottom: 4px; }
+.nw-user-menu button {
+  display: block; width: 100%; text-align: left; padding: 7px 10px;
+  border: 0; background: none; border-radius: 7px; font-size: .9rem; color: #1d2635;
+}
+.nw-user-menu button:hover { background: #f2f4f7; }
+.nw-user-logout { color: #dc3545; }
 .nw-avatar {
   width: 30px; height: 30px; border-radius: 50%; flex: 0 0 30px;
   background: var(--nw-sidebar-active); color: #fff;
@@ -110,10 +122,107 @@ body {
 }
 .hb i:hover { opacity: .7; }
 
+/* 方格心跳图（HeartbeatGrid，全站统一：1 格=1 分钟、正方形、单行滑动窗口） */
+.hbg { display: flex; gap: var(--gap, 3px); position: relative; }
+.hbg i { width: var(--sz, 15px); height: var(--sz, 15px); border-radius: 3px; flex: 0 0 auto; }
+.hbg i:hover { outline: 2px solid #2f81f7; outline-offset: 1px; }
+.hbg-ok { background: #05c96b; }
+.hbg-partial { background: #f0883e; } /* 橙：周期内至少一次未连通但后续恢复 */
+/* 紫罗兰：降级——按目标丢包率下中位数超阈值（与 P2 告警同口径）。
+   原用黄 #ffc107 与橙 #f0883e 色相仅差 18°（同为暖色），小格上难分，且橙黄之间
+   已被红色一端挤住、无法再靠明度拉开；改用紫与橙/绿/红/灰全色系分隔。
+   注：状态徽章「降质」仍用黄（徽章带文字标签不依赖色相区分，心跳格无文字才需强色差） */
+.hbg-degraded { background: #a78bfa; }
+/* 黄：探测历史「IP 扫描」批次条的"较上一批次下降"（语义不同于丢包降级，保持暖色警示） */
+.hbg-warn { background: #ffc107; }
+.hbg-fail { background: #dc3545; }
+.hbg-nodata { background: #adb5bd; }
+.hbg-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+/* 时间轴（仅详情页）：刻度与格子同宽对齐，标签可越出格宽 */
+.hbg-axis { display: flex; gap: var(--gap, 3px); margin-top: 4px; }
+.hbg-tick { flex: 0 0 auto; width: var(--sz, 15px); height: 12px; position: relative; }
+.hbg-tick b { position: absolute; left: 0; top: 0; font-weight: 400; font-size: 10.5px; line-height: 1; color: #8a94a6; white-space: nowrap; }
+/* 悬停浮层：格子正上方显示时间区间与状态 */
+.hbg-tip { position: absolute; top: -30px; z-index: 5; background: #1d2635; color: #fff; font-size: 11px; line-height: 1; padding: 6px 9px; border-radius: 4px; white-space: nowrap; pointer-events: none; box-shadow: 0 2px 8px rgba(16,24,40,.25); }
+/* 探测历史趋势条：240 个统计桶铺满容器宽（区别于分钟方格的固定 15px 格） */
+.hbg.hbg-fill i { flex: 1 1 0; width: auto; min-width: 2px; height: 22px; border-radius: 3px; }
+/* 探测历史趋势缩放区：滚轮缩放 + 拖动平移 */
+.trend-zoom { cursor: grab; user-select: none; touch-action: none; }
+.trend-zoom.dragging { cursor: grabbing; }
+.trend-zoom.zoomed { outline: 1px dashed rgba(47, 129, 247, .55); outline-offset: 5px; border-radius: 4px; }
+
+/* 探测历史筛选卡分层：控件行 + 多选 chips 独占整行（任意窗口宽下换行点确定，不与控件混排错乱）；
+   容器最小高度=控件行+chips 行，无 chips 页签（全部/行业网）留白补齐，页签切换卡高恒定 */
+.hist-filter { min-height: 101px; }
+.hist-chips { margin-top: 12px; min-height: 31px; }
+
+/* 探测历史多系列图例：4 列网格整齐分行；常驻三行高度，页签切换时画布与下方模块不跳；
+   点击图例项隐藏/显示对应折线（颜色与折线一致，隐藏后降透明度） */
+.hist-legend {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px 14px; min-height: 72px; align-content: start; margin-top: 6px;
+}
+.hist-legend-item {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  border: 0; background: none; padding: 1px 0; text-align: left;
+  font-size: .82rem; color: #3c4657; cursor: pointer; border-radius: 4px;
+}
+.hist-legend-item:hover { color: #0d6efd; }
+.hist-legend-item.off { opacity: .38; }
+.hist-legend-dot { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; }
+.hist-legend-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1199px) {
+  .hist-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0; }
+}
+
+/* 下划线标题式页签（探测历史类型切换 / 探测配置分区 / 系统设置子页）：button 与 router-link(a) 通用 */
+.nw-tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid #e3e8ef; }
+.nw-tabs button, .nw-tabs a {
+  border: none; background: none; padding: 9px 16px 8px; font-size: 1.05rem;
+  color: #6b7686; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer;
+  text-decoration: none; display: inline-block;
+}
+.nw-tabs button:hover, .nw-tabs a:hover { color: #1d2635; }
+.nw-tabs button.active, .nw-tabs a.active { color: #0d6efd; font-weight: 600; border-bottom-color: #0d6efd; }
+
+/* 探测历史明细：失败行浅红底，一眼定位故障 */
+tr.rec-fail td { background: color-mix(in srgb, #dc3545 7%, white); }
+/* 探测历史明细表加载覆盖层：不占布局，表格保留旧数据不跳动 */
+.nw-loading {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, .65);
+  font-size: .875rem; color: #6c757d;
+}
+
 .line-card { border-left: 4px solid var(--st, #adb5bd); cursor: pointer; }
 .line-card:hover { box-shadow: 0 3px 10px rgba(16,24,40,.10); }
+/* 不可点击的同款卡（总览的内→内/行业网监测项）：去掉手型与悬停阴影 */
+.line-card.no-link { cursor: default; }
+.line-card.no-link:hover { box-shadow: none; }
 
-.stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+/* ===== 页头动作按钮家族（图标+文字柔和底色，取代生硬的 Bootstrap outline + emoji）：
+   同形不同色 = 语义区分——accent 蓝=主动作（触发探测/生成），neutral 灰=次要动作（拉取/导航/导出） ===== */
+.nw-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: .3rem .85rem; border: 1px solid transparent; border-radius: 9px;
+  font-size: .875rem; font-weight: 500; line-height: 1.45; cursor: pointer;
+  transition: background .15s, color .15s; user-select: none; text-decoration: none;
+}
+.nw-btn:focus-visible { outline: 2px solid #2f81f7; outline-offset: 2px; }
+.nw-btn:disabled { opacity: .62; cursor: default; }
+.nw-btn svg { width: 14px; height: 14px; flex: 0 0 14px; }
+.nw-btn-accent { background: #e7f0fe; color: #1a63d6; }
+.nw-btn-accent:not(:disabled):hover { background: #d7e7fd; color: #124cba; }
+.nw-btn-neutral { background: #f1f3f6; color: #51607a; }
+.nw-btn-neutral:not(:disabled):hover { background: #e4e9f0; color: #34405a; }
+/* 工作中：图标旋转反馈（仅标注 nw-btn-spin 的「进行中」类按钮，如探测下发中/数据加载中；
+   导出类按钮等待时不该转下载图标） */
+.nw-btn-spin:disabled svg { animation: nw-spin .9s linear infinite; }
+@keyframes nw-spin { to { transform: rotate(360deg); } }
+
+/* 统计数值：tabular-nums 让滚动动画逐帧变化时数字宽度不抖动（历史页 KPI 同样受益） */
+.stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
 
 table.nw-table td, table.nw-table th { vertical-align: middle; }
 /* 行高加大（覆盖 Bootstrap table-sm 紧凑 padding），列表更易读 */
@@ -136,4 +245,44 @@ table.nw-table td .btn, table.nw-table th .btn { white-space: nowrap; }
   border-color: color-mix(in srgb, #05c96b 35%, white); color: #0a8f4d; font-weight: 600;
 }
 .ip-cell.off { background: #eef0f3; border-color: #e0e3e8; color: #98a2ae; }
-.ip-cell .ip-rtt { display: block; font-size: .68rem; font-weight: 400; opacity: .8; }
+/* IP 扫描记录行：整行可点击展开/收起 */
+.run-row { cursor: pointer; }
+.run-row:hover td { background: #f4f6f9; }
+
+/* ===== 总览四卡片布局（2026-11-08 用户要求）=====
+   左上「内网」+ 左下「行业网」上下排列，右侧「今日告警」与左列等高（列表内部滚轮滚动），
+   下方「互联网」通栏、高度随线路卡自适应；左右两列宽度 3:2。
+   左列内容不足以撑满 min-height 时，内网:行业网 按 3:2 分配剩余高度。 */
+.dash-top { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+.dash-left { display: flex; flex-direction: column; gap: 16px; min-height: 460px; }
+.dash-sec { display: flex; flex-direction: column; }
+.dash-sec-internal { flex: 3 1 auto; }
+.dash-sec-industry { flex: 2 1 auto; }
+.dash-sec-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.dash-sec-head h5 { font-size: 1rem; }
+.dash-empty { color: #8a94a6; font-size: .86rem; padding: 10px 0; }
+/* 今日告警：单元格撑满左列高度，卡内列表独立滚动，告警条数再多也不会拉高整行 */
+.dash-alert-cell { position: relative; }
+.dash-alerts { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.dash-alarm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.dash-alarm {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 2px; border-bottom: 1px dashed #edf0f4;
+}
+.dash-alarm:last-child { border-bottom: 0; }
+.dash-alarm-main { flex: 1 1 auto; min-width: 0; }
+.dash-alarm-title { font-size: .9rem; line-height: 1.35; color: #1d2635; }
+.dash-alarm-meta { font-size: .76rem; color: #98a2ae; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.dash-alarm-st { flex: 0 0 auto; font-size: .76rem; margin-top: 1px; }
+/* 顶部统计行（监测对象/连通率/在线线路/平均测速/今日告警）：主数值下方一行小字说明口径 */
+.stat-sub { font-size: .74rem; color: #98a2ae; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 991.98px) {
+  .dash-top { grid-template-columns: 1fr; }
+  .dash-left { min-height: 0; }
+  .dash-alert-cell { position: static; }
+  .dash-alerts { position: static; }
+  .dash-alarm-list { max-height: 340px; }
+}

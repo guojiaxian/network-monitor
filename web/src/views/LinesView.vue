@@ -1,6 +1,11 @@
 <template>
   <div>
-    <h4 class="mb-3">线路配置</h4>
+    <div class="d-flex align-items-center mb-3">
+      <div>
+        <h4 class="mb-0">线路配置</h4>
+        <div class="text-secondary small mt-1">宽带线路清单、契约带宽与楼层关联；出口公网 IP 由绑定探针自动探测回填</div>
+      </div>
+    </div>
 
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center mb-2">
@@ -22,7 +27,7 @@
             <td>{{ l.floor_name || '—' }}</td>
             <td class="text-end">
               <button class="btn btn-sm btn-outline-success me-1" :disabled="speeding === l.id" @click="speedNow(l)">
-                {{ speeding === l.id ? '已排程…' : '⚡ 立即测速' }}
+                {{ speeding === l.id ? '已排程…' : '立即测速' }}
               </button>
               <button class="btn btn-sm btn-outline-primary me-1" @click="openLine(l)">编辑</button>
               <button class="btn btn-sm btn-outline-danger" @click="delLine(l)">删除</button>

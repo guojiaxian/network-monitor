@@ -1,13 +1,14 @@
 <template>
   <div>
     <div class="d-flex align-items-center mb-3">
-      <h4 class="mb-0">线路状态</h4>
-      <span class="text-secondary small ms-3">每条线路的关键运行信息（详情图表请点线路名）· 每 15 秒自动刷新</span>
-      <button class="btn btn-sm btn-outline-primary ms-2" :disabled="refreshing" @click="refreshNow">
-        {{ refreshing ? '刷新中…' : '🔄 立即刷新' }}
+      <div>
+        <h4 class="mb-0">线路状态</h4>
+        <div class="text-secondary small mt-1">每条线路的关键运行信息（详情图表请点线路名）· 每 15 秒自动刷新<span v-if="refreshMsg" class="text-success ms-2">{{ refreshMsg }}</span><span v-if="err" class="text-danger ms-2">{{ err }}</span></div>
+      </div>
+      <button class="nw-btn nw-btn-accent nw-btn-spin ms-auto" :disabled="refreshing" @click="refreshNow"
+        title="命令全部探针立即重探出口 IP 并排程一轮测速（下一心跳 ≤15s 回报，约 1 分钟内开测）">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>{{ refreshing ? '下发中…' : '立即探测' }}
       </button>
-      <span v-if="refreshMsg" class="text-success small ms-2">{{ refreshMsg }}</span>
-      <span v-if="err" class="text-danger small ms-3">{{ err }}</span>
     </div>
 
     <div class="row g-3">
@@ -23,24 +24,25 @@
             <span v-if="ispOf(l)"> · {{ ispOf(l) }}</span>
             <span v-if="geoOf(l)"> · {{ geoOf(l) }}</span>
           </div>
-          <div class="mb-2"><HeartbeatBar :beats="recentOf(l)" /></div>
+          <div class="mb-2"><HeartbeatGrid :cells="hbOf(l)" /></div>
           <div class="row g-1 small mb-2">
             <div class="col-6">时延：<b>{{ fmtMs(rttOf(l)) }}</b></div>
-            <div class="col-6">丢包：<b>{{ lossOf(l) }}%</b></div>
-            <div class="col-6">TCP：{{ tcpOf(l) ? '✓' : '✗' }}</div>
-            <div class="col-6">HTTP：{{ httpOf(l) ? '✓' : '✗' }}</div>
+            <div class="col-6">丢包：<b :class="lossCls(l)">{{ lossOf(l) }}%</b></div>
+            <div class="col-6">TCP：{{ tcpOf(l) ? '✓' : '×' }}</div>
+            <div class="col-6">HTTP：{{ httpOf(l) ? '✓' : '×' }}</div>
           </div>
-          <div class="small mb-1" v-if="l.contract_down_mbps > 0 || speedOf(l)">
+          <!-- 在线 IP 设备数：该线路各楼层最近一次 IP 扫描的在线主机数之和（定时扫描每小时刷新） -->
+          <div class="small mb-2">
+            在线 IP：<b style="color:#0a8f4d">{{ l.online_sum ?? '—' }}</b>
+            <template v-if="l.online_sum !== null && l.online_sum !== undefined">
+              <span class="text-secondary"> 台（共扫 {{ l.scan_sum }} 个地址）</span>
+              <span class="text-secondary ms-1" v-if="l.scanned_at">· {{ scanAgo(l.scanned_at) }}</span>
+            </template>
+            <span class="text-secondary ms-1" v-else>（该线路楼层尚未扫描）</span>
+          </div>
+          <div class="small mb-2">
             测速 ↓ <b>{{ speedOf(l) ? speedOf(l).toFixed(1) : '—' }}</b> Mbps
-            <span class="text-secondary" v-if="l.contract_down_mbps > 0">/ 契约 {{ l.contract_down_mbps }}M</span>
             <span class="text-secondary ms-1" v-if="speedAtOf(l)">（{{ speedAtOf(l) }}）</span>
-          </div>
-          <div class="progress mb-1" v-if="l.contract_down_mbps > 0 && speedOf(l)" style="height:8px">
-            <div class="progress-bar" :class="pctOf(l) >= 85 ? 'bg-success' : (pctOf(l) >= 70 ? 'bg-warning' : 'bg-danger')"
-              :style="{ width: Math.min(100, pctOf(l)) + '%' }"></div>
-          </div>
-          <div class="small text-secondary mb-2" v-if="l.contract_down_mbps > 0 && speedOf(l)">
-            契约达成 {{ pctOf(l) }}%
           </div>
           <div class="mt-auto d-flex align-items-center small">
             <span class="text-secondary">探针：{{ probesOf(l) || '未绑定' }}</span>
@@ -59,28 +61,25 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
-import HeartbeatBar from '../components/HeartbeatBar.vue'
-import { fmtTime } from '../utils'
+import HeartbeatGrid from '../components/HeartbeatGrid.vue'
+import { fmtTime, minuteCells } from '../utils'
 
 // 线路状态：把线路详情页的关键数字（出口/契约/测速/时延丢包/心跳）提升到列表级。
 // 数据全部来自 overview 单次调用；多探针线路按"交叉验证"语义聚合（全成功=绿）。
 const lines = ref([]), err = ref('')
+const lossThresh = ref(10) // 降级丢包阈值（接口下发，与 P2 告警同口径）
 const refreshing = ref(false), refreshMsg = ref('')
 let timer = null
 
 function statusesOf(l) { return l.statuses || [] }
 function rttOf(l) { return Math.max(0, ...statusesOf(l).map(s => s.rtt_ms || 0)) }
-function lossOf(l) { return Math.max(0, ...statusesOf(l).map(s => s.loss_pct || 0)) }
+function lossOf(l) { return Number(Math.max(0, ...statusesOf(l).map(s => s.loss_pct || 0)).toFixed(1)) }
+function lossCls(l) { return lossOf(l) > lossThresh.value ? 'text-warning' : '' }
 function tcpOf(l) { return statusesOf(l).length > 0 && statusesOf(l).every(s => s.tcp_ok) }
 function httpOf(l) { return statusesOf(l).length > 0 && statusesOf(l).every(s => s.http_ok) }
-function recentOf(l) {
-  // 逐位与：所有探针都成功才算成功（交叉验证语义）
-  const ss = statusesOf(l).filter(s => (s.recent || []).length)
-  if (!ss.length) return []
-  const n = Math.min(...ss.map(s => s.recent.length))
-  const out = []
-  for (let i = 0; i < n; i++) out.push(ss.every(s => s.recent[s.recent.length - n + i]))
-  return out
+function hbOf(l) {
+  // 心跳格：后端已按探针并集汇总到线路（1 格 = 1 分钟，全部样本失败才算失败）
+  return minuteCells(l.minutes, lossThresh.value)
 }
 function speedOf(l) {
   const withSpeed = statusesOf(l).filter(s => s.speed_down_mbps > 0)
@@ -95,7 +94,15 @@ function speedAtOf(l) {
   withSpeed.sort((a, b) => (b.speed_at || '').localeCompare(a.speed_at || ''))
   return fmtTime(withSpeed[0].speed_at)
 }
-function pctOf(l) { return l.contract_down_mbps > 0 ? Math.round(speedOf(l) * 100 / l.contract_down_mbps) : 0 }
+// 扫描时间的人性化相对时间（"12 分钟前"），超过 2 小时改为绝对时间
+function scanAgo(t) {
+  const diff = Date.now() - new Date(t).getTime()
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return '刚刚扫描'
+  if (min < 60) return `${min} 分钟前扫描`
+  if (min < 120) return `${Math.floor(min / 60)} 小时前扫描`
+  return fmtTime(t) + ' 扫描'
+}
 function ispOf(l) {
   const s = statusesOf(l).find(x => x.egress_isp)
   return (s && s.egress_isp) || l.isp || ''
@@ -114,6 +121,7 @@ async function load() {
   try {
     const [ov, ps] = await Promise.all([api.get('/api/admin/overview'), api.get('/api/admin/probes')])
     lines.value = ov.lines || []
+    if (ov.loss_thresh > 0) lossThresh.value = ov.loss_thresh
     probeNames = {}
     for (const p of ps) probeNames[p.probe.id] = p.probe.name || p.probe.hostname
     err.value = ''
@@ -124,7 +132,7 @@ async function refreshNow() {
   refreshing.value = true; refreshMsg.value = ''
   try {
     await api.post('/api/admin/probes/refresh', {})
-    refreshMsg.value = '已下发：探针下一心跳（≤15s）重探出口并回报'
+    refreshMsg.value = '已下发：探针下一心跳（≤15s）重探出口并回报，同时已排程一轮测速（约 1 分钟内开始），页面加速刷新中'
     clearInterval(timer)
     let n = 10
     timer = setInterval(() => { load(); if (--n <= 0) { clearInterval(timer); timer = setInterval(load, 15000) } }, 3000)
