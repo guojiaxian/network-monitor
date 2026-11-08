@@ -55,9 +55,9 @@
     <div class="nw-card">
       <div class="d-flex align-items-center">
         <h6 class="mb-0">连通性心跳</h6>
-        <span class="text-secondary small ms-auto">每格 = 1 分钟探测汇总 · 右端最新，放不下最左移出 · 数据来自 VictoriaMetrics</span>
+        <span class="text-secondary small ms-auto">每格 = 1 分钟探测汇总 · 右端最新，放不下最左移出 · 与线路状态卡同源（中心逐分钟统计，最近 3 小时）</span>
       </div>
-      <div class="mt-2" v-if="hbCells.length"><HeartbeatGrid :cells="hbCells" :end="hbEnd" legend axis /></div>
+      <div class="mt-2" v-if="hbCells.length"><HeartbeatGrid :cells="hbCells" legend axis /></div>
       <div class="text-secondary small py-3 text-center" v-else>暂无连通性数据。</div>
     </div>
 
@@ -69,12 +69,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import Chart from 'chart.js/auto'
 import { api } from '../api'
-import { fmtTime, goBack, vmMinuteCells } from '../utils'
+import { fmtTime, goBack, minuteCells, applyStatusToCurrent } from '../utils'
 import StatusBadge from '../components/StatusBadge.vue'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
 
@@ -83,26 +83,34 @@ const router = useRouter()
 const line = ref({}), probeIds = ref([]), status = ref('unknown')
 // 出口 IP 变化轨迹（探针对账自动回写与手工修改均留痕）
 const ipHistory = ref([])
-// 连通性心跳（1 格 = 1 分钟滑动窗口，HeartbeatGrid 渲染）
-const hbCells = ref([]), hbEnd = ref(0)
+// 连通性心跳（1 格 = 1 分钟，最近 3 小时；与状态卡同一份后端分钟统计）
+const hbCells = ref([])
+const engineCells = ref([]) // 后端最近 3 小时分钟统计（overview?minutes=180）
+const lossThresh = ref(10) // 降级丢包阈值（接口下发，与 P2 告警同口径）
 // 在线 IP 卡片的悬停明细：逐楼层在线数（多楼层线路便于核对加总）
 const onlineDetail = computed(() => (line.value.online_ips || [])
   .map(f => `${f.floor_name}：${f.up}/${f.total}`).join('；'))
 let rttChart = null, speedChart = null
+let liveTimer = null // 状态/心跳 15s 实时刷新（图表不重绘）
 
 const palette = ['#2f81f7', '#05c96b', '#ffc107', '#dc3545', '#6f42c1', '#20c997', '#fd7e14', '#adb5bd']
 
 async function loadLine() {
   const [lines, ov, ps] = await Promise.all([
-    api.get('/api/admin/lines'), api.get('/api/admin/overview'), api.get('/api/admin/probes'),
+    api.get('/api/admin/lines'), api.get('/api/admin/overview?minutes=180'), api.get('/api/admin/probes'),
   ])
   line.value = lines.find(l => l.id === Number(route.params.id)) || {}
   // 探针 id → 显示名（测速图按 probe 分组，图例显示 probe-N 而非原始 UUID）
   for (const p of ps) probeNames[p.probe.id] = p.probe.name || p.probe.hostname
+  if (ov.loss_thresh > 0) lossThresh.value = ov.loss_thresh
   const ol = (ov.lines || []).find(l => l.id === Number(route.params.id))
   if (ol) {
     probeIds.value = ol.probe_ids || []
     status.value = ol.status
+    // 详情页整段 3 小时心跳都用后端同一份分钟统计（不再是引擎 60min + VM 历史两源合并），
+    // 与状态卡/告警同一数据、同一判定；当前分钟按状态兜底。
+    engineCells.value = minuteCells(ol.minutes || [], lossThresh.value)
+    hbCells.value = applyStatusToCurrent(engineCells.value, status.value)
   }
 }
 
@@ -149,13 +157,6 @@ async function draw() {
   }
 
   rttChart = render('rttChart', mk(rttSeries, 'ms'))
-  // 连通性心跳：1 格 = 1 分钟（avg by (target) 的 [300s] 滚动窗口 step=60，与降质告警 5min 窗口
-  // 同款——vmMinuteCells 逐点按目标丢包率下中位数判黄格），取近 3 小时，
-  // 组件按容器宽度滑动展示；终点前移 90s 避开在途分钟与 VM 写入延迟
-  const end = dayjs().unix() - 90
-  const grid = await fetchSeries(`avg by (target) (avg_over_time(nw_ping_ok{line="${name}"}[300s]))`, 3, 60, { start: end - 3 * 3600, end }).catch(() => [])
-  hbCells.value = vmMinuteCells(grid)
-  hbEnd.value = end
 
   // 测速曲线（近 7 天，30 分钟粒度；契约下行参考线已删——固定水平线无信息量，用户要求）
   const speedSeries = await fetchSeries7d(`max by (probe) (nw_speed_down_mbps{line="${name}"})`)
@@ -169,9 +170,16 @@ async function fetchSeries7d(expr) {
   return (d.data && d.data.result) || []
 }
 
+// 活动告警期间详情页必须跟状态卡同步：15s 刷新状态徽章 + 最近 3 小时心跳（不重绘历史图表）
+async function refreshLive() {
+  try { await loadLine() } catch {}
+}
+
 onMounted(async () => {
   await loadLine()
   api.get(`/api/admin/lines/${route.params.id}/ip-history`).then(d => { ipHistory.value = d || [] }).catch(() => {})
   await draw()
+  liveTimer = setInterval(refreshLive, 15000)
 })
+onBeforeUnmount(() => { if (liveTimer) clearInterval(liveTimer) })
 </script>

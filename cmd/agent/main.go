@@ -14,7 +14,7 @@ import (
 	"netwatch/internal/agent"
 )
 
-var version = "1.0.0"
+var version = "1.0.1"
 
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {

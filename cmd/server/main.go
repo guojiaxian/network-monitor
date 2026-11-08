@@ -21,7 +21,7 @@ import (
 	"netwatch/internal/server"
 )
 
-var version = "1.0.0"
+var version = "1.0.1"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)

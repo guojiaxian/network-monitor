@@ -454,8 +454,29 @@ func aggregateLineOverviews(lines []LineRow, probes []ProbeRow, snap map[string]
 	return ovs, unbound
 }
 
+// minutesParam 心跳分钟数裁剪参数：缺省 def；非法/越界回落 def；上限 max（与 3h 内存环一致）。
+func minutesParam(r *http.Request, def, max int) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("minutes"))
+	if err != nil || n < 1 {
+		return def
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
+// trimMinStats 只保留最后 n 个分钟桶（时间升序切片）；n<=0 不裁剪。
+func trimMinStats(ms []MinStat, n int) []MinStat {
+	if n > 0 && len(ms) > n {
+		return ms[len(ms)-n:]
+	}
+	return ms
+}
+
 // overviewData 总览数据构建（管理端与大屏共用）。mon/ind 为中心侧监测引擎（可为 nil）。
-func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRunner, ind *IndustryRunner) (map[string]any, error) {
+// minutes 控制线路/楼层心跳分钟数：状态页/大屏 60，详情页 180（内存环 3h）。
+func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRunner, ind *IndustryRunner, minutes int) (map[string]any, error) {
 	lines, err := store.ListLines(ctx)
 	if err != nil {
 		return nil, err
@@ -466,6 +487,14 @@ func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRu
 	}
 	snap := eng.Snapshot()
 	ovs, unbound := aggregateLineOverviews(lines, probes, snap)
+	// 线路心跳按 minutes 裁剪；探针 statuses 里的 minutes 固定 60（总览/大屏/探针页用，
+	// 详情页用的是线路级 ovs[].minutes，可请求 180）。
+	for i := range ovs {
+		ovs[i].Minutes = trimMinStats(ovs[i].Minutes, minutes)
+		for j := range ovs[i].Statuses {
+			ovs[i].Statuses[j].Minutes = trimMinStats(ovs[i].Statuses[j].Minutes, 60)
+		}
+	}
 
 	// 内→内：中心服务器内置监控（Uptime Kuma 模式）
 	monSnapshot := []MonitorStatus{}
@@ -484,7 +513,8 @@ func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRu
 		"loss_thresh": lossThreshOf(ctx, store)}, nil
 }
 func (a *AdminAPI) overview(w http.ResponseWriter, r *http.Request) {
-	out, err := overviewData(r.Context(), a.store, a.eng, a.mon, a.ind)
+	out, err := overviewData(r.Context(), a.store, a.eng, a.mon, a.ind,
+		minutesParam(r, 60, int(ringHistory.Minutes())))
 	if err != nil {
 		httpError(w, 500, "db")
 		return
@@ -518,7 +548,7 @@ type overviewFloor struct {
 	ProbeNames []string          `json:"probe_names"` // 关联探针名（页脚展示）
 }
 
-func floorStatusData(ctx context.Context, store *Store, eng *Engine) ([]overviewFloor, error) {
+func floorStatusData(ctx context.Context, store *Store, eng *Engine, minutes int) ([]overviewFloor, error) {
 	floors, err := store.ListFloors(ctx)
 	if err != nil {
 		return nil, err
@@ -544,7 +574,11 @@ func floorStatusData(ctx context.Context, store *Store, eng *Engine) ([]overview
 		}
 		probeNames[p.ID] = n
 	}
-	return aggregateFloorStatus(floors, ovs, scans, probeNames), nil
+	out := aggregateFloorStatus(floors, ovs, scans, probeNames)
+	for i := range out {
+		out[i].Minutes = trimMinStats(out[i].Minutes, minutes)
+	}
+	return out, nil
 }
 
 // aggregateFloorStatus 把线路状态与楼层扫描摘要聚合到楼层（纯函数，供回归用例覆盖）。
@@ -658,7 +692,8 @@ func lossThreshOf(ctx context.Context, store *Store) float64 {
 }
 
 func (a *AdminAPI) floorStatus(w http.ResponseWriter, r *http.Request) {
-	out, err := floorStatusData(r.Context(), a.store, a.eng)
+	out, err := floorStatusData(r.Context(), a.store, a.eng,
+		minutesParam(r, 60, int(ringHistory.Minutes())))
 	if err != nil {
 		httpError(w, 500, "db")
 		return
@@ -919,7 +954,9 @@ func (a *AdminAPI) listProbes(w http.ResponseWriter, r *http.Request) {
 	snap := a.eng.Snapshot()
 	out := make([]map[string]any, 0, len(ps))
 	for _, p := range ps {
-		m := map[string]any{"probe": p, "status": snap[p.ID]}
+		st := snap[p.ID]
+		st.Minutes = trimMinStats(st.Minutes, 60) // 探针状态页/总览默认 60 格
+		m := map[string]any{"probe": p, "status": st}
 		out = append(out, m)
 	}
 	writeJSON(w, out)

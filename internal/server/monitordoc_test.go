@@ -175,3 +175,56 @@ func TestMonitorDocHeartbeatClamp(t *testing.T) {
 		t.Fatalf("心跳越界应回退 15s: %+v", row)
 	}
 }
+
+// TestMonitorDocSummarySync 配置速览与告警表同步：当前周期/目标/45s 判活/冲突行都要在。
+func TestMonitorDocSummarySync(t *testing.T) {
+	d := docMap(t, monitorDocData(fakeGetter(map[string]any{
+		"agent_config": map[string]any{
+			"interval_ping_s": 10, "interval_tcp_s": 20, "interval_dns_s": 30, "interval_http_s": 60,
+			"timeout_s": 3, "retry_n": 1, "retry_pause_ms": 300, "heartbeat_sec": 15, "egress_min": 5,
+			"icmp_targets": []string{"223.5.5.5", "119.29.29.29"},
+			"tcp_targets":  []string{"www.qq.com:443", "www.baidu.com:443"},
+			"dns_servers":  []string{"223.5.5.5", "119.29.29.29"},
+			"dns_domain":   "www.baidu.com",
+			"http_targets": []string{"http://www.qq.com/generate_204", "https://www.baidu.com"},
+		},
+		"alert_settings": map[string]any{
+			"blind_secs": 60, "loss_window_min": 5, "loss_pct_thresh": 10,
+			"eval_interval_s": 5, "type_fail_window_s": 60,
+		},
+	}, errors.New("no pg"))))
+
+	row := docRow(d, "当前生效配置速览", "探测周期与目标")
+	if row == nil {
+		t.Fatal("缺少配置速览·探测周期与目标")
+	}
+	for _, want := range []string{"ICMP 10s", "TCP 20s", "DNS 30s", "HTTP 60s"} {
+		if !strings.Contains(row["period"].(string), want) {
+			t.Fatalf("速览周期缺少 %s: %s", want, row["period"])
+		}
+	}
+	for _, want := range []string{"223.5.5.5", "119.29.29.29", "www.baidu.com"} {
+		if !strings.Contains(row["desc"].(string), want) {
+			t.Fatalf("速览目标缺少 %s: %s", want, row["desc"])
+		}
+	}
+	if row = docRow(d, "当前生效配置速览", "告警判定"); row == nil || !strings.Contains(row["desc"].(string), "45s") {
+		t.Fatalf("速览应写清线路中断 45s: %+v", row)
+	}
+	var down, conflict bool
+	for _, a := range d["alerts"].([]any) {
+		am := a.(map[string]any)
+		switch am["name"] {
+		case "线路中断":
+			down = true
+			if !strings.Contains(am["trigger"].(string), "45s") {
+				t.Fatalf("线路中断触发条件应写 45s: %s", am["trigger"])
+			}
+		case "探针数据冲突":
+			conflict = true
+		}
+	}
+	if !down || !conflict {
+		t.Fatalf("告警表缺少线路中断/探针数据冲突: down=%v conflict=%v", down, conflict)
+	}
+}

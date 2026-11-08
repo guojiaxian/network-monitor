@@ -1,8 +1,12 @@
 package server
 
 import (
+	"io"
+	"log"
 	"testing"
 	"time"
+
+	"netwatch/internal/proto"
 )
 
 // 多目标丢包统计的下中位数抗单点性：
@@ -303,5 +307,118 @@ func TestRecentOutageLocked(t *testing.T) {
 	}
 	if e2.recentOutageLocked(LineMeta{Bound: false}, "p3", now, 5*time.Minute) {
 		t.Fatal("其他探针不应被抑制")
+	}
+}
+
+// 判活窗口新鲜度：证人（心跳/网关样本）超过 45s 未更新时不能作为线路中断依据，
+// 否则探针猝死会在 45s 先报 P1、60s 才报 P0。
+func TestFreshEnough(t *testing.T) {
+	now := time.Now()
+	if !freshEnough(now.Add(-44*time.Second), now) {
+		t.Fatal("44s 内应视为新鲜")
+	}
+	if freshEnough(now.Add(-46*time.Second), now) {
+		t.Fatal("超过判活窗口不应视为新鲜")
+	}
+	if freshEnough(time.Time{}, now) {
+		t.Fatal("零值时间不应视为新鲜")
+	}
+}
+
+// 线路中断在场时不评估类型故障：全断 60s 后 TCP/DNS/HTTP 会同时满足
+// "全部目标连续失败"，若不抑制会在 P1 之外叠加三条文案错误的 P2。
+func TestEvalTypeFailSuppressedDuringOutage(t *testing.T) {
+	now := time.Now()
+	e := &Engine{
+		live: map[string]*liveAlert{
+			KindLineDown + ":line7": {}, // 线路中断在场
+		},
+		outageEnd: map[string]time.Time{},
+		log:       log.New(io.Discard, "", 0),
+	}
+	agg := &probeAgg{typeFailTargets: map[string]map[string]time.Time{
+		"tcp": {
+			"www.qq.com:443":    now.Add(-2 * time.Minute),
+			"www.baidu.com:443": now.Add(-2 * time.Minute),
+		},
+	}}
+	cfg := &proto.ProbeConfig{TCPTargets: []string{"www.qq.com:443", "www.baidu.com:443"}}
+	e.evalTypeFail("p1", agg, cfg, LineMeta{LineID: 7, Bound: true}, now)
+	for _, typ := range []string{"tcp", "dns", "http"} {
+		if e.live[KindProbeTypeFail+":p1:"+typ] != nil {
+			t.Fatalf("线路中断期间不应触发类型故障: %s", typ)
+		}
+	}
+
+	// 中断刚收口 10s：旧失败计时不应在恢复瞬间补发 P2（等一个最慢协议周期）
+	e2 := &Engine{
+		live:      map[string]*liveAlert{},
+		outageEnd: map[string]time.Time{KindLineDown + ":line7": now.Add(-10 * time.Second)},
+		log:       log.New(io.Discard, "", 0),
+	}
+	agg2 := &probeAgg{typeFailTargets: map[string]map[string]time.Time{
+		"tcp": {
+			"www.qq.com:443":    now.Add(-2 * time.Minute),
+			"www.baidu.com:443": now.Add(-2 * time.Minute),
+		},
+	}}
+	e2.evalTypeFail("p1", agg2, cfg, LineMeta{LineID: 7, Bound: true}, now)
+	if e2.live[KindProbeTypeFail+":p1:tcp"] != nil {
+		t.Fatal("中断刚收口时不应补发类型故障")
+	}
+}
+
+// anyOKWithin：ICMP 成功与 TCP/DNS/HTTP 成功都算；失败样本不算。
+func TestAnyOKWithin(t *testing.T) {
+	now := time.Now()
+	agg := &probeAgg{pingWin: []pingRec{{target: "a", ok: true, ts: now.Add(-10 * time.Second)}}}
+	if !agg.anyOKWithin(now, 20*time.Second) {
+		t.Fatal("10s 前成功应命中 20s 窗口")
+	}
+	if agg.anyOKWithin(now, 5*time.Second) {
+		t.Fatal("10s 前成功不应命中 5s 窗口")
+	}
+	agg2 := &probeAgg{lastPubOK: now.Add(-3 * time.Second)}
+	if !agg2.anyOKWithin(now, 5*time.Second) {
+		t.Fatal("TCP/DNS/HTTP 成功也应计入")
+	}
+	agg3 := &probeAgg{pingWin: []pingRec{{target: "a", ok: false, ts: now}}}
+	if agg3.anyOKWithin(now, 20*time.Second) {
+		t.Fatal("失败样本不应计入")
+	}
+}
+
+// typeFailGrace：最慢协议周期（含 10% 抖动）+ 5s 余量，最低 60s 窗口。
+func TestTypeFailGrace(t *testing.T) {
+	cfg := &proto.ProbeConfig{IntervalTCPS: 20, IntervalDNSS: 30, IntervalHTTPS: 60}
+	if got := typeFailGrace(cfg); got != 71*time.Second {
+		t.Fatalf("60s 周期应为 71s，got %v", got)
+	}
+	cfg2 := &proto.ProbeConfig{IntervalTCPS: 5, IntervalDNSS: 5, IntervalHTTPS: 5}
+	if got := typeFailGrace(cfg2); got != 65*time.Second {
+		t.Fatalf("最低窗口应为 65s，got %v", got)
+	}
+}
+
+// 降质抑制：全断（45s 零成功）/中断在场/中断刚收口一个窗口内 → 不判定降质；
+// 正常线路（pubOK45=true 且无中断）不抑制。
+func TestDegradedSuppressed(t *testing.T) {
+	now := time.Now()
+	e := &Engine{live: map[string]*liveAlert{}, outageEnd: map[string]time.Time{}}
+	lm := LineMeta{LineID: 7, Bound: true}
+	if !e.degradedSuppressed(false, lm, "p1", now, 5*time.Minute) {
+		t.Fatal("45s 内零成功应抑制降质")
+	}
+	if e.degradedSuppressed(true, lm, "p1", now, 5*time.Minute) {
+		t.Fatal("正常线路不应抑制")
+	}
+	e.live[KindLineDown+":line7"] = &liveAlert{}
+	if !e.degradedSuppressed(true, lm, "p1", now, 5*time.Minute) {
+		t.Fatal("线路中断在场应抑制")
+	}
+	delete(e.live, KindLineDown+":line7")
+	e.outageEnd[KindLineDown+":line7"] = now.Add(-time.Minute)
+	if !e.degradedSuppressed(true, lm, "p1", now, 5*time.Minute) {
+		t.Fatal("中断刚收口一个窗口内应抑制")
 	}
 }

@@ -268,15 +268,36 @@ table.nw-table td .btn, table.nw-table th .btn { white-space: nowrap; }
 .dash-alert-cell { position: relative; }
 .dash-alerts { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .dash-alarm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* 今日告警行：固定四列（级别 / 告警内容 / 时间 / 状态），一眼横向扫读 */
 .dash-alarm {
-  display: flex; align-items: flex-start; gap: 10px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center; gap: 10px;
   padding: 9px 2px; border-bottom: 1px dashed #edf0f4;
 }
 .dash-alarm:last-child { border-bottom: 0; }
-.dash-alarm-main { flex: 1 1 auto; min-width: 0; }
-.dash-alarm-title { font-size: .9rem; line-height: 1.35; color: #1d2635; }
-.dash-alarm-meta { font-size: .76rem; color: #98a2ae; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.dash-alarm-st { flex: 0 0 auto; font-size: .76rem; margin-top: 1px; }
+/* 告警内容：最多两行（窄屏/长标题换行而非直接截断），仍超长省略并保留 title 悬停全文 */
+.dash-alarm-title {
+  font-size: .9rem; line-height: 1.35; color: #1d2635;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.dash-alarm-time { font-size: .78rem; color: #98a2ae; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 状态：已恢复=绿色强调（浅绿底描边胶囊），进行中=红色同类胶囊 */
+.dash-alarm-st {
+  font-size: .76rem; font-weight: 600; line-height: 1.5;
+  padding: 1px 9px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.dash-alarm-st.is-recovered {
+  color: #0a8f4d;
+  background: color-mix(in srgb, #05c96b 13%, white);
+  border-color: color-mix(in srgb, #05c96b 38%, white);
+}
+.dash-alarm-st.is-firing {
+  color: #b42318;
+  background: color-mix(in srgb, #dc3545 11%, white);
+  border-color: color-mix(in srgb, #dc3545 35%, white);
+}
 /* 顶部统计行（监测对象/连通率/在线线路/平均测速/今日告警）：主数值下方一行小字说明口径 */
 .stat-sub { font-size: .74rem; color: #98a2ae; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 991.98px) {

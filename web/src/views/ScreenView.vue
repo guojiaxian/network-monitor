@@ -51,7 +51,7 @@
                 <div class="lc-pill"><span class="lc-pill-dot"></span>{{ statusText(f.status) }}</div>
               </div>
               <div class="lc-sub">{{ f.cidr || '未配置网段' }}<template v-if="floorLines(f)"> · {{ floorLines(f) }}</template></div>
-              <HeartbeatGrid :cells="minuteCells(f.minutes, lossThresh)" :end="hbEndOf(f)" />
+              <HeartbeatGrid :cells="hbCellsOf(f)" :end="hbEndOf(f)" />
               <div class="lc-metrics">
                 <div class="m">
                   <i>时延</i><b>{{ f.rtt_ms ? f.rtt_ms.toFixed(0) : '—' }}</b><u>ms</u>
@@ -75,7 +75,7 @@
               <div class="lc-pill"><span class="lc-pill-dot"></span>{{ statusText(l.status) }}</div>
             </div>
             <div class="lc-sub">{{ l.floor_name || '未关联楼层' }}<template v-if="l.public_ip"> · {{ l.public_ip }}</template><template v-if="l.isp"> · {{ l.isp }}</template></div>
-            <HeartbeatGrid :cells="minuteCells(l.minutes, lossThresh)" :end="hbEndOf(l)" />
+            <HeartbeatGrid :cells="hbCellsOf(l)" :end="hbEndOf(l)" />
             <div class="lc-metrics">
               <div class="m">
                 <i>时延</i><b>{{ rttOf(l) }}</b><u>ms</u>
@@ -109,7 +109,7 @@ import dayjs from 'dayjs'
 import { api } from '../api'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
 import CountUp from '../components/CountUp.vue'
-import { minuteCells } from '../utils'
+import { minuteCells, applyStatusToCurrent } from '../utils'
 
 // 大屏双口径：/screen = 线路（默认）、/screen/floor = 楼层。
 // 同一组件按路由切换渲染；地址栏随口径变化，可分别投屏/收藏。
@@ -119,6 +119,8 @@ function toggleView() { router.push(isFloor.value ? '/screen' : '/screen/floor')
 
 const lines = ref([]), floors = ref([])
 const lossThresh = ref(10) // 降级丢包阈值（接口下发，与 P2 告警同口径）
+// 心跳格：当前分钟按线路/楼层状态兜底，活动告警期间不显示绿色
+function hbCellsOf(x) { return applyStatusToCurrent(minuteCells(x.minutes, lossThresh.value), x.status) }
 const unbound = ref([])
 const todayStats = ref({ conn_rate: null, avg_speed: null }) // 今日聚合（后端 60s 缓存）
 const clock = ref(''), stale = ref(false), lastRefresh = ref('')
@@ -141,7 +143,6 @@ const summaryCards = computed(() => {
   const bad = lines.value.filter(x => ['down', 'floor_down'].includes(x.status)).length
   const deg = lines.value.filter(x => ['degraded', 'speed_low', 'conflict'].includes(x.status)).length
   const blind = lines.value.filter(x => x.status === 'blind').length
-  const lineColor = bad ? '#f87171' : (deg || blind) ? '#fbbf24' : '#34d399'
   // 在线 IP：按 floor_id 去重（多线路关联同一楼层时不重复计数）
   const byFloor = new Map()
   for (const l of lines.value) {
@@ -151,28 +152,28 @@ const summaryCards = computed(() => {
   for (const f of byFloor.values()) ip += f.up || 0
   const rate = todayStats.value.conn_rate
   const ratePct = rate == null ? null : rate * 100
-  const rateColor = ratePct == null ? '#e6eef8' : ratePct >= 99 ? '#34d399' : ratePct >= 95 ? '#fbbf24' : '#f87171'
   const sp = todayStats.value.avg_speed
+  // 用户要求 5 张卡片样式统一（同第 2 张卡）：边框色与数字色都用同一主题绿
+  const ACCENT = '#34d399'
   return [
     {
-      label: '监测对象', num: total, color: '#e6eef8',
+      label: '监测对象', num: total, color: ACCENT,
       sub: `互联网宽带线路 ${lines.value.length} 条`,
     },
     {
-      label: '互联网连通率', num: ratePct, decimals: 1, suffix: '%', color: rateColor,
+      label: '互联网连通率', num: ratePct, decimals: 1, suffix: '%', color: ACCENT,
       sub: ratePct == null ? '今日暂无探测样本' : '今日 00:00 至今 · 全部线路',
     },
     {
-      label: '在线线路', num: online, suffix: `/${lines.value.length}`,
-      color: lines.value.length ? lineColor : '#64748b',
+      label: '在线线路', num: online, suffix: `/${lines.value.length}`, color: ACCENT,
       sub: `降质 ${deg} · 中断 ${bad} · 盲区 ${blind}`,
     },
     {
-      label: '平均测速', num: sp, decimals: sp != null && sp < 100 ? 1 : 0, suffix: ' Mbps', color: '#60a5fa',
+      label: '平均测速', num: sp, decimals: sp != null && sp < 100 ? 1 : 0, suffix: ' Mbps', color: ACCENT,
       sub: sp == null ? '今日暂无测速数据' : '今日均值 · 线路 1-11',
     },
     {
-      label: '在线 IP', num: ip, color: '#e6eef8',
+      label: '在线 IP', num: ip, color: ACCENT,
       sub: byFloor.size ? `最近一次扫描 · ${byFloor.size} 个楼层` : '尚无扫描数据',
     },
   ]
@@ -192,7 +193,7 @@ const gridStyle = computed(() => {
   if (!n || w < 100 || h < 100 || window.innerWidth <= 1100) return null
   const vmin = Math.min(window.innerWidth, window.innerHeight) / 100
   const R = 1.5         // 卡片目标宽高比
-  const MINH = 23 * vmin // 单格最低高度（内容实测 22.5vmin + 余量）
+  const MINH = 22.8 * vmin // 单格最低高度（内容实测 22.5vmin + 余量；23 在统计条放大后会差 1px 触发多列重排）
   const gap = 1.6 * vmin // 与 .line-grid 的 1.6vmin 列/行间距一致
   const cellH = (rows) => (h - (rows - 1) * gap) / rows
   const s = Math.sqrt(n * w / (h * R))
@@ -202,7 +203,7 @@ const gridStyle = computed(() => {
     // 宽高比越接近 R 越好；末行有空格（不能整除）加 0.25 惩罚——优先能整除的列数，
     // 避免 12 条线路被选成 5 列出现 5+5+2 的末行大空档（去掉右栏后主区变宽时实测）
     const empty = Math.ceil(n / c) * c - n
-    const d = Math.abs((w / c) / (h / Math.ceil(n / c)) - R) + (empty ? 0.25 : 0)
+    const d = Math.abs((w / c) / (h / Math.ceil(n / c)) - R) + (empty ? 0.35 : 0)
     if (d < best || (d === best && c > cols)) { cols = c; best = d }
   }
   let rows = Math.ceil(n / cols)
@@ -311,19 +312,19 @@ onUnmounted(() => { clearInterval(timer); clearInterval(clockTimer); if (ro) ro.
 .scr-date { font-size: clamp(11px, 1.5vmin, 16px); color: #8fa3bd; }
 
 /* ===== 顶部统计条（与总览统计卡同口径，深色玻璃卡） ===== */
-.scr-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1vmin; padding-top: 1vmin; }
+.scr-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1.2vmin; padding-top: 1.2vmin; }
 .scr-stat {
   background: linear-gradient(180deg, rgba(148, 163, 184, .08), rgba(148, 163, 184, .03));
   border: 1px solid rgba(148, 163, 184, .14);
   border-left: .5vmin solid var(--c, #64748b);
-  border-radius: 1.2vmin; padding: .7vmin 1.4vmin;
+  border-radius: 1.2vmin; padding: .9vmin 1.6vmin;
   display: flex; flex-direction: column; min-width: 0; overflow: hidden;
 }
-.ss-label { font-size: clamp(10px, 1.25vmin, 14px); color: #8fa3bd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ss-val { font-size: clamp(17px, 2.2vmin, 27px); font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ss-label { font-size: clamp(11px, 1.5vmin, 16px); color: #8fa3bd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-val { font-size: clamp(20px, 3vmin, 36px); font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* 单位/分母用小号灰字，突出主数值（CountUp 内部节点，需 :deep 穿透 scoped） */
 .ss-val :deep(.count-unit) { font-size: .55em; font-weight: 600; color: #8fa3bd; margin-left: .3vmin; }
-.ss-sub { font-size: clamp(9px, 1.1vmin, 12px); color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-sub { font-size: clamp(10px, 1.25vmin, 14px); color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ===== 主体 ===== */
 .scr-body { flex: 1; display: grid; grid-template-columns: 1fr; gap: 2vmin; padding: 1.8vmin 0; min-height: 0; }

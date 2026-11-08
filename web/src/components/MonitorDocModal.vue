@@ -59,6 +59,10 @@
         </ul>
       </template>
     </div>
+    <!-- 纯说明弹窗无「保存」语义：底部只保留一个「确定」= 关闭（无取消按钮，避免两个按钮都只做关闭） -->
+    <template #footer>
+      <button class="btn btn-sm btn-primary" @click="$emit('close')">确定</button>
+    </template>
   </ModalBox>
 </template>
 

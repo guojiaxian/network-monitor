@@ -14,6 +14,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"netwatch/internal/proto"
@@ -129,6 +130,17 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	if httpN == 0 {
 		httpN = len(def.HTTPTargets)
 	}
+	targetTxt := func(cur, dft []string) string {
+		s := strings.Join(cur, " / ")
+		if s == "" {
+			s = strings.Join(dft, " / ")
+		}
+		return s
+	}
+	icmpTxt := targetTxt(cfg.ICMPTargets, def.ICMPTargets)
+	tcpTxt := targetTxt(cfg.TCPTargets, def.TCPTargets)
+	dnsTxt := targetTxt(cfg.DNSServers, def.DNSServers)
+	httpTxt := targetTxt(cfg.HTTPTargets, def.HTTPTargets)
 
 	// ---- 测速 ----
 	var sp SpeedSettings
@@ -252,7 +264,6 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		als = DefaultAlertSettings()
 	}
 	blind := dInt(als.BlindSecs, 60)
-	lineDown := dInt(als.LineDownSecs, 30)
 	lossWin := dInt(als.LossWindowMin, 5)
 	lossPct := als.LossPctThresh
 	if lossPct <= 0 {
@@ -265,7 +276,36 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		tfTxt = fmt.Sprintf("%d 分钟", tfWin/60)
 	}
 
+	summary := DocGroup{
+		Title: "当前生效配置速览",
+		Note:  "数值实时取自系统配置；详细机制见下方分组",
+		Rows: []DocRow{
+			{
+				Name:    "探测周期与目标",
+				Desc:    "ICMP " + icmpTxt + "；TCP " + tcpTxt + "；DNS " + dnsTxt + " → " + dStr(cfg.DNSDomain, def.DNSDomain) + "；HTTP " + httpTxt,
+				Period:  fmt.Sprintf("ICMP %s / TCP %s / DNS %s / HTTP %s", secs(pingIv), secs(tcpIv), secs(dnsIv), secs(httpIv)),
+				Timeout: secs(tmo), Status: "on", Source: "探测配置页",
+			},
+			{
+				Name:   "探测重试 / 心跳 / 出口识别",
+				Desc:   fmt.Sprintf("失败后重试 %d 次（间隔 %dms），任一次成功即成功；出口识别超时 8s", retryN, retryMs),
+				Period: fmt.Sprintf("心跳 %s / 出口 %s", secs(hbSec), mins(egMin)),
+				Status: "on", Source: "探测配置页 · 上报与重试",
+			},
+			{
+				Name:   "告警判定",
+				Desc:   fmt.Sprintf("盲区 >%s；线路中断 45s 无成功；楼层网关连续 3 次失败；降质 %dmin 丢包中位数 >%g%%；探测异常 %s；评估 %s", secs(blind), lossWin, lossPct, tfTxt, secs(evalIv)),
+				Period: secs(evalIv), Status: "on", Source: "告警策略页 / 探测配置页",
+			},
+			{
+				Name:   "心跳展示",
+				Desc:   "1 格 = 1 分钟；红=中断、紫=降质、橙=有失败已恢复、灰=无数据、绿=正常；状态/总览/大屏最近 60 分钟，详情页最近 3 小时",
+				Period: "60min / 3h", Status: "fixed", Source: "内置固定（内存环 3h）",
+			},
+		},
+	}
 	groups := []DocGroup{
+		summary,
 		{
 			Title: "一、自动探测 / 监测项 · 楼层探针",
 			Note:  "目标与间隔在「探测配置」页可改（约 30s 下发生效）；间隔带 ±10% 随机抖动防同步风暴〔内置固定〕；每轮探测失败自动重试，任一次成功即成功；线路判活 = 任一协议 45s 内有成功即可达〔内置固定〕",
@@ -305,7 +345,8 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	alerts := []DocAlert{
 		{Level: "P0", Name: "监控盲区", Trigger: "探针心跳缺失 > " + secs(blind) + "〔告警策略页可配〕", Recovery: "心跳恢复"},
 		{Level: "P1", Name: "楼层中断", Trigger: "网关连续 3 次 ping 失败", Recovery: "网关恢复可达"},
-		{Level: "P1", Name: "线路中断", Trigger: fmt.Sprintf("该线路全部有效探针（心跳 %ds 内 + 网关正常）在 %ds 内公网全部无成功（投票全员一致；分歧报 P2 冲突）", blind, lineDown), Recovery: "任一公网目标恢复"},
+		{Level: "P1", Name: "线路中断", Trigger: "网关可达且探针心跳/网关样本在 45s 内，任一协议 45s 内无成功；全部有效探针一致（分歧报 P2 冲突）", Recovery: "任一公网目标恢复"},
+		{Level: "P2", Name: "探针数据冲突", Trigger: "多探针线路中部分探针报中断、其余正常；线路大概率正常，优先检查异常探针", Recovery: "探针意见一致或恢复"},
 		{Level: "P2", Name: "线路降质", Trigger: fmt.Sprintf("%dmin 窗口各目标丢包率下中位数 >%g%%〔告警策略页可配〕（每目标 ≥10 样本同时成立；线路/楼层中断恢复后一个窗口内不评估，避免同一故障双重告警）", lossWin, lossPct), Recovery: "丢包回落"},
 		{Level: "P2", Name: "网速慢", Trigger: fmt.Sprintf("一轮均值 <%gMbps〔探测配置页可配〕→ 1 分钟后复测一轮仍低（等待固定）", sp.SlowMinMbps), Recovery: "任一轮实测达标"},
 		{Level: "P2", Name: "服务 / 行业网不可达", Trigger: "连续 3 次探测失败", Recovery: "恢复即解除"},

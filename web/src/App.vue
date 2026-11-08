@@ -51,6 +51,8 @@
     </div>
   </div>
   <router-view v-else />
+  <!-- 新告警顶部提示：仅管理布局内启用（登录页/大屏不轮询、不弹窗） -->
+  <AlertToast v-if="showLayout && user" />
   <ChangePasswordModal :show="pwdOpen" @close="pwdOpen = false" @saved="onPwdSaved" />
   <MonitorDocModal :show="docOpen" @close="docOpen = false" />
 </template>
@@ -61,6 +63,7 @@ import { useRoute } from 'vue-router'
 import { api } from './api'
 import ChangePasswordModal from './components/ChangePasswordModal.vue'
 import MonitorDocModal from './components/MonitorDocModal.vue'
+import AlertToast from './components/AlertToast.vue'
 
 const route = useRoute()
 // 前端版本号由 vite.config.js 从 web/package.json 注入（发版时与后端 VERSION 同步）

@@ -1,6 +1,6 @@
-// 样本环重启回填：内存 pingWin 重启即清零，状态卡/总览/大屏的方格心跳会从零
-// 重新累计（重启前的分钟全部灰格，最长约 1 小时才补满，用户多次问询）。
-// VictoriaMetrics 落盘历史不受重启影响——启动时把近 65 分钟的公网 ping 样本
+// 样本环重启回填：内存 pingWin 重启即清零，状态卡/总览/大屏/详情页的方格心跳会从零
+// 重新累计（重启前的分钟全部灰格，最长约 3 小时才补满，用户多次问询）。
+// VictoriaMetrics 落盘历史不受重启影响——启动时把近 3 小时的公网 ping 样本
 // （nw_ping_ok，class=public）回填进内存环，重启后心跳立即满格无灰。
 // 范围刻意收窄：只回填 pingWin（心跳展示 + 线路判活 lossStats 的数据源）；
 // 网关状态、lastTCP/DNS/HTTP、typeFailTargets 等状态机字段不做历史重建，
@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-const ringBackfillWin = 65 * time.Minute // 与 evaluate 的 pingWin 修剪窗口一致
+const ringBackfillWin = ringHistory // 与 evaluate 的 pingWin 修剪窗口一致（3 小时）
 
-// backfillRing 启动后从 VM 导出近 65 分钟 nw_ping_ok 并合入样本环（异步，不阻塞启动）。
+// backfillRing 启动后从 VM 导出近 3 小时 nw_ping_ok 并合入样本环（异步，不阻塞启动）。
 // VM 与 server 同机 systemd 拉起偶尔慢半拍，失败重试一次；两次都失败则本次
 // 启动退回原行为（心跳条从零累计），不影响其他功能。
 func (e *Engine) backfillRing(ctx context.Context) {

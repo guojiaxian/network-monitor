@@ -97,13 +97,12 @@
             <router-link to="/alerts" class="small text-decoration-none ms-auto">告警中心 →</router-link>
           </div>
           <div class="dash-alarm-list">
+            <!-- 列序（用户指定，从左到右）：级别 → 告警内容 → 时间 → 状态 -->
             <div v-for="a in todayAlerts" :key="a.id" class="dash-alarm">
               <span class="badge flex-shrink-0" :class="sevCls(a.severity)">{{ a.severity }}</span>
-              <div class="dash-alarm-main">
-                <div class="dash-alarm-title">{{ a.title }}</div>
-                <div class="dash-alarm-meta">{{ hhmmss(a.starts_at) }}</div>
-              </div>
-              <span class="dash-alarm-st" :class="a.status === 'firing' ? 'text-danger fw-semibold' : 'text-secondary'">
+              <div class="dash-alarm-title" :title="a.title">{{ a.title }}</div>
+              <span class="dash-alarm-time">{{ hhmmss(a.starts_at) }}</span>
+              <span class="dash-alarm-st" :class="a.status === 'firing' ? 'is-firing' : 'is-recovered'">
                 {{ a.status === 'firing' ? '进行中' : '已恢复' }}
               </span>
             </div>
@@ -156,7 +155,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
-import { minuteCells, vmMinuteCells } from '../utils'
+import { minuteCells, vmMinuteCells, applyStatusToCurrent } from '../utils'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
 import CountUp from '../components/CountUp.vue'
 
@@ -312,7 +311,10 @@ const lossThresh = ref(10) // 降级丢包阈值（接口下发，与 P2 告警�
 
 function probeOf(l) { return (l.statuses && l.statuses[0]) || null }
 // 心跳格：绑定探针的逐分钟汇总（1 格 = 1 分钟，滑动窗口；黄格=降级，与告警同口径）
-function hbOf(l) { return minuteCells(probeOf(l) && probeOf(l).minutes, lossThresh.value) }
+function hbOf(l) {
+  // 当前分钟按线路状态兜底：已中断/降质时不允许当前格还是绿色
+  return applyStatusToCurrent(minuteCells(probeOf(l) && probeOf(l).minutes, lossThresh.value), l.status)
+}
 function rttOf(l) { const p = probeOf(l); return p && p.rtt_ms ? p.rtt_ms.toFixed(1) : '—' }
 function lossOf(l) { const p = probeOf(l); return p && p.loss_pct != null ? p.loss_pct.toFixed(1) : '—' }
 function lossCls(l) { const p = probeOf(l); return p && p.loss_pct > lossThresh.value ? 'text-warning' : '' }

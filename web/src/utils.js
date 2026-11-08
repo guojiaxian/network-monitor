@@ -73,3 +73,22 @@ export function vmMinuteCells(series, lossThresh = 10) {
   }
   return out
 }
+
+// applyStatusToCurrent 活动 P1/P2 期间当前分钟不得显示绿色：状态（告警）与心跳来自同一份
+// 分钟统计，但仍可能因分钟桶/滚动窗口的相位差在阈值边界出现绿色；这里按状态兜底。
+// 只改"当前分钟"且只把绿/橙提升为红/紫/灰，不动历史分钟，也不覆盖已更严重的颜色。
+export function applyStatusToCurrent(cells, status, nowMs = Date.now()) {
+  if (!cells || !cells.length) return cells
+  const down = status === 'down' || status === 'floor_down'
+  const deg = status === 'degraded'
+  const blind = status === 'blind'
+  if (!down && !deg && !blind) return cells
+  const nowMin = Math.floor(nowMs / 60000) * 60
+  const i = cells.findIndex(c => c.t === nowMin)
+  if (i < 0) return cells
+  const s = cells[i].s
+  if (s !== 'ok' && s !== 'partial') return cells
+  const out = cells.slice()
+  out[i] = { ...out[i], s: down ? 'fail' : deg ? 'degraded' : 'nodata' }
+  return out
+}

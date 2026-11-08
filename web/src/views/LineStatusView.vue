@@ -62,7 +62,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
-import { fmtTime, minuteCells } from '../utils'
+import { fmtTime, minuteCells, applyStatusToCurrent } from '../utils'
 
 // 线路状态：把线路详情页的关键数字（出口/契约/测速/时延丢包/心跳）提升到列表级。
 // 数据全部来自 overview 单次调用；多探针线路按"交叉验证"语义聚合（全成功=绿）。
@@ -78,8 +78,9 @@ function lossCls(l) { return lossOf(l) > lossThresh.value ? 'text-warning' : '' 
 function tcpOf(l) { return statusesOf(l).length > 0 && statusesOf(l).every(s => s.tcp_ok) }
 function httpOf(l) { return statusesOf(l).length > 0 && statusesOf(l).every(s => s.http_ok) }
 function hbOf(l) {
-  // 心跳格：后端已按探针并集汇总到线路（1 格 = 1 分钟，全部样本失败才算失败）
-  return minuteCells(l.minutes, lossThresh.value)
+  // 心跳格：后端已按探针并集汇总到线路（1 格 = 1 分钟，全部样本失败才算失败）；
+  // 当前分钟按线路状态兜底，保证"已中断/降质"时不会还显示绿色。
+  return applyStatusToCurrent(minuteCells(l.minutes, lossThresh.value), l.status)
 }
 function speedOf(l) {
   const withSpeed = statusesOf(l).filter(s => s.speed_down_mbps > 0)

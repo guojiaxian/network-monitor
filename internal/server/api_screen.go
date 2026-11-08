@@ -78,7 +78,7 @@ func (a *ScreenAPI) overview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	out, err := overviewData(ctx, a.store, a.eng, a.mon, a.ind)
+	out, err := overviewData(ctx, a.store, a.eng, a.mon, a.ind, 60)
 	if err != nil {
 		httpError(w, 500, "db")
 		return
@@ -90,7 +90,7 @@ func (a *ScreenAPI) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	out["alerts"] = alerts
 	// 楼层口径（/screen/floor）：按楼层聚合的网络状况（与线路口径同一数据族，均只读展示）
-	if floors, err := floorStatusData(ctx, a.store, a.eng); err == nil {
+	if floors, err := floorStatusData(ctx, a.store, a.eng, 60); err == nil {
 		out["floors"] = floors
 	}
 	out["ts"] = time.Now().UnixMilli()

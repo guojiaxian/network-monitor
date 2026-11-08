@@ -14,6 +14,22 @@ import (
 	"netwatch/internal/proto"
 )
 
+// aliveWindow 线路判活窗口：任一协议在窗口内有成功样本即视为线路可达。
+// 与探测配置联动（ICMP 10s / TCP 20s 时可容忍一次失败样本）；调整探测周期需同步评估。
+const aliveWindow = 45 * time.Second
+
+// freshEnough 样本时间是否仍在判活窗口内（探针心跳/网关样本的证人新鲜度）。
+func freshEnough(t, now time.Time) bool { return !t.IsZero() && now.Sub(t) < aliveWindow }
+
+// ringHistory 探针 ping 内存环保留时长：详情页 3 小时 1 分钟心跳 + 线路判活/降质评估共用。
+// 12 台 × 2 目标 × 10s ≈ 2.6 万条 / ~2MB；VM 仍是 2 年长期时序库，环只是热缓存。
+// 调整时同步 backfill 窗口、overview/floor-status 的 minutes 上限和详情页请求。
+const ringHistory = 3 * time.Hour
+
+// degradedRecentOK 新发降质前要求最近 20s 内至少有一次成功样本（ICMP 10s×2）：
+// 5 分钟丢包中位数可能早于 45s 判活窗口越阈值，不能把"刚刚开始的全断"先报成降质。
+const degradedRecentOK = 20 * time.Second
+
 // 告警类别
 const (
 	KindLineDown      = "line_down"       // P1 线路中断（网关正常、公网全部失败；多探针线路需全部报中断）
@@ -640,6 +656,27 @@ func (e *Engine) typeFailWindow() time.Duration {
 	return time.Duration(secs) * time.Second
 }
 
+// typeFailGrace 中断收口后的协议故障静默期：覆盖最慢协议的一个探测周期（含 ±10% 抖动），
+// 给恢复后的首个成功样本留出到达时间，避免用中断期间的旧失败计时在恢复瞬间误报；
+// 静默期后仍失败则正常触发（届时失败已持续超过一个完整窗口）。
+func typeFailGrace(cfg *proto.ProbeConfig) time.Duration {
+	maxS := cfg.IntervalTCPS
+	if cfg.IntervalDNSS > maxS {
+		maxS = cfg.IntervalDNSS
+	}
+	if cfg.IntervalHTTPS > maxS {
+		maxS = cfg.IntervalHTTPS
+	}
+	if maxS <= 0 {
+		maxS = 60
+	}
+	d := time.Duration(maxS) * time.Second * 11 / 10
+	if d < 60*time.Second {
+		d = 60 * time.Second
+	}
+	return d + 5*time.Second
+}
+
 // trackTypeFail 维护类型级失败跟踪：失败样本记 target 进入连续失败的时刻（首次失败时间），
 // 成功样本即清除。Ingest 锁内调用。
 func trackTypeFail(agg *probeAgg, typ, target string, ok bool, ts time.Time) {
@@ -682,6 +719,16 @@ func typeFailHit(m map[string]time.Time, targets []string, now time.Time, win ti
 // evalTypeFail 对单探针的 TCP/DNS/HTTP 三类探测做"全部目标连续失败"判定（evaluate 锁内调用）。
 // 触发 → P2 探测异常（fingerprint 按探针+类型）；任一目标恢复（失败集合不再覆盖全部目标）→ 收口。
 func (e *Engine) evalTypeFail(probeID string, agg *probeAgg, probeCfg *proto.ProbeConfig, lm LineMeta, now time.Time) {
+	// 线路/楼层中断在场时不评估类型故障：全断会让 TCP/DNS/HTTP 同时满足
+	// "全部目标连续失败"，在 P1 之外再叠加三条 P2，且文案"线路本身正常（ICMP 可达）"
+	// 与事实相反。中断期间收口已有类型故障；恢复后仍失败则按新样本重新判定。
+	if e.outageActiveLocked(lm, probeID) ||
+		e.recentOutageLocked(lm, probeID, now, typeFailGrace(probeCfg)) {
+		for _, typ := range []string{"tcp", "dns", "http"} {
+			e.resolveLocked(KindProbeTypeFail+":"+probeID+":"+typ, "线路中断期间不判定协议故障")
+		}
+		return
+	}
 	typeDefs := []struct {
 		typ, label string
 		targets    []string
@@ -742,6 +789,16 @@ func lossMedian(perTarget map[string][2]int) (float64, bool) {
 	return ratios[(len(ratios)-1)/2], true
 }
 
+// anyOKWithin 最近 win 内是否有任一成功样本（ICMP 或 TCP/DNS/HTTP）。
+func (agg *probeAgg) anyOKWithin(now time.Time, win time.Duration) bool {
+	for _, r := range agg.pingWin {
+		if r.ok && now.Sub(r.ts) < win {
+			return true
+		}
+	}
+	return !agg.lastPubOK.IsZero() && now.Sub(agg.lastPubOK) < win
+}
+
 func (agg *probeAgg) lossStats(now time.Time, win time.Duration) (anyOK45 bool, medianLoss float64, enough bool) {
 	perTarget := map[string][2]int{} // target → [总数, 失败数]
 	for _, r := range agg.pingWin {
@@ -754,7 +811,7 @@ func (agg *probeAgg) lossStats(now time.Time, win time.Duration) (anyOK45 bool, 
 			p[1]++
 		}
 		perTarget[r.target] = p
-		if r.ok && now.Sub(r.ts) < 45*time.Second {
+		if r.ok && now.Sub(r.ts) < aliveWindow {
 			anyOK45 = true
 		}
 	}
@@ -815,8 +872,8 @@ func (e *Engine) evaluate() {
 			e.resolveLocked(KindBlind+":"+probeID, "")
 		}
 
-		// 窗口修剪：方格心跳图要展示近 60 分钟（1 格 = 1 分钟），多留 5 分钟余量
-		cutoff := now.Add(-65 * time.Minute)
+		// 窗口修剪：保留 3 小时（详情页 1 分钟心跳最多 180 格；状态卡/总览按 minutes 裁剪到 60）
+		cutoff := now.Add(-ringHistory)
 		kept := agg.pingWin[:0]
 		for _, r := range agg.pingWin {
 			if r.ts.After(cutoff) {
@@ -840,12 +897,14 @@ func (e *Engine) evaluate() {
 
 		// P1 线路中断投票：探针在线 + 网关可达（有效证人）时对"公网是否全断"投票。
 		// 多探针线路：全部证人报中断才升 P1；部分报中断 → P2 数据冲突；未绑定线路的探针维持按探针判定。
-		probeAlive := agg.everSeen && now.Sub(agg.lastSeen) < 90*time.Second
-		gwOKRecent := agg.gwEver && agg.gwOK && now.Sub(agg.gwLast) < 90*time.Second
+		// 证人新鲜度必须用判活窗口（不是 90s）：探针心跳/网关样本超过 45s 未更新时，
+		// 它不能再作为"线路中断"的有效证人——否则探针猝死 45s 会先报 P1、60s 才报 P0。
+		probeAlive := agg.everSeen && freshEnough(agg.lastSeen, now)
+		gwOKRecent := agg.gwEver && agg.gwOK && freshEnough(agg.gwLast, now)
 		pubOK45, _, pingEnough := agg.lossStats(now, 6*time.Minute)
 		// 线路判活扩展：TCP/DNS/HTTP 任一目标 45s 内成功同样证明线路可达——
 		// ICMP 通但应用层协议被拦/目标失效时，线路不应被误判中断（任一协议通即活）
-		if !pubOK45 && !agg.lastPubOK.IsZero() && now.Sub(agg.lastPubOK) < 45*time.Second {
+		if !pubOK45 && !agg.lastPubOK.IsZero() && now.Sub(agg.lastPubOK) < aliveWindow {
 			pubOK45 = true
 		}
 		if lm.Bound {
@@ -914,14 +973,15 @@ func (e *Engine) evaluate() {
 		if enough {
 			fp := KindDegraded + ":" + probeID
 			active := e.live[fp] != nil
-			// 中断进行中或刚收口一个窗口内：窗口样本被中断污染，不判定降质
-			suppressed := e.outageActiveLocked(lm, probeID) ||
-				e.recentOutageLocked(lm, probeID, now, winMin)
+			// 中断进行中或刚收口一个窗口内：窗口样本被中断污染，不判定降质。
+			// !pubOK45 兜住"同一轮评估"：line_down 在本轮末尾才汇总进 e.live，
+			// 45s 内零成功时不再先发一条 P2 降质（全断已由 P1 表达）。
+			suppressed := e.degradedSuppressed(pubOK45, lm, probeID, now, winMin)
 			if suppressed {
 				if active {
 					e.resolveLocked(fp, "线路中断（或刚恢复），降质并入中断事件")
 				}
-			} else if !active && medianLoss > als.LossPctThresh {
+			} else if !active && agg.anyOKWithin(now, degradedRecentOK) && medianLoss > als.LossPctThresh {
 				e.fireLocked(fp, AlertMeta{
 					Kind: KindDegraded, Severity: kindSeverity[KindDegraded],
 					Title: kindTitle[KindDegraded], ProbeID: probeID,
@@ -975,6 +1035,14 @@ func (e *Engine) outageActiveLocked(lm LineMeta, probeID string) bool {
 	}
 	return e.live[KindLineDown+":"+probeID] != nil ||
 		e.live[KindFloorDown+":"+probeID] != nil
+}
+
+// degradedSuppressed 降质抑制：45s 内零成功（全断已由 P1 表达）、中断在场、
+// 或中断刚收口一个窗口内（窗口样本被中断失败样本污染）。需在 e.mu 锁内调用。
+func (e *Engine) degradedSuppressed(pubOK45 bool, lm LineMeta, probeID string, now time.Time, win time.Duration) bool {
+	return !pubOK45 ||
+		e.outageActiveLocked(lm, probeID) ||
+		e.recentOutageLocked(lm, probeID, now, win)
 }
 
 // recentOutageLocked 该探针/线路是否在最近一个丢包窗口内刚收口过 P1 中断。
@@ -1258,9 +1326,8 @@ func (agg *probeAgg) minuteStats(winMin int) []MinStat {
 			out[i].M = v
 		}
 	}
-	if len(out) > 60 {
-		out = out[len(out)-60:]
-	}
+	// 不在引擎层裁剪：内存环保留 3h（180 桶），由接口层按 minutes 参数裁剪
+	// （状态卡/总览/大屏 60，详情页 180），避免详情页只能拿到 60 桶。
 	return out
 }
 
@@ -1278,7 +1345,8 @@ func (e *Engine) Snapshot() map[string]ProbeStatus {
 			EgressIP: agg.egressIP, EgressISP: agg.ipISP, EgressGeo: agg.ipGeo, EgressIPv6: agg.ipV6,
 			CPUPct: agg.cpuPct, MemPct: agg.memPct, DiskPct: agg.diskPct, ClockOffsetMs: agg.clockOffsetMs,
 		}
-		// 方格心跳图：近 60 分钟逐分钟 ping 汇总（按时间正序，稀疏——无样本的分钟不产出）
+		// 方格心跳图：近 3 小时逐分钟 ping 汇总（按时间正序，稀疏——无样本的分钟不产出）；
+		// 接口层按 minutes 参数裁剪（状态卡/总览/大屏默认 60，详情页 180）
 		st.Minutes = agg.minuteStats(als.LossWindowMin)
 		switch {
 		case agg.everSeen && now.Sub(agg.lastSeen) > 60*time.Second:

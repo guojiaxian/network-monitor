@@ -43,14 +43,14 @@
 
     <div class="text-secondary py-4 text-center nw-card mb-3" v-if="!floor.id">楼层不存在或已被删除。</div>
 
-    <!-- 联通率详情：出口线路探针连通性（数据来自 VictoriaMetrics） -->
+    <!-- 联通率详情：心跳与楼层状态卡同源；时延/连通率来自 VictoriaMetrics -->
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center">
         <h6 class="mb-0">连通性心跳（关联线路聚合）</h6>
-        <span class="text-secondary small ms-auto">每格 = 1 分钟探测汇总 · 右端最新，放不下最左移出 · 数据来自 VictoriaMetrics</span>
+        <span class="text-secondary small ms-auto">每格 = 1 分钟探测汇总 · 右端最新，放不下最左移出 · 与楼层状态卡同源（中心逐分钟统计，最近 3 小时）</span>
       </div>
-      <div class="mt-2" v-if="hbCells.length"><HeartbeatGrid :cells="hbCells" :end="hbEnd" legend axis /></div>
-      <div class="text-secondary small py-4 text-center" v-else>未关联线路，无出口连通性数据。</div>
+      <div class="mt-2" v-if="hbCells.length"><HeartbeatGrid :cells="hbCells" legend axis /></div>
+      <div class="text-secondary small py-4 text-center" v-else>暂无可用的连通性数据。</div>
     </div>
 
     <div class="nw-card mb-3" v-if="hasLineData">
@@ -96,7 +96,7 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import Chart from 'chart.js/auto'
 import { api } from '../api'
-import { fmtTime, goBack, vmMinuteCells } from '../utils'
+import { fmtTime, goBack, minuteCells, applyStatusToCurrent } from '../utils'
 import StatusBadge from '../components/StatusBadge.vue'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
 
@@ -109,12 +109,15 @@ const floorId = Number(route.params.id)
 const floor = ref({})
 const okRate = ref(null)        // 近 24h 平均连通率（各线路全部目标平均）
 const hasLineData = ref(false)  // 是否查到出口线路连通性序列
-const hbCells = ref([]), hbEnd = ref(0) // 连通性心跳（1 格 = 1 分钟滑动窗口）
+const hbCells = ref([])          // 连通性心跳（1 格 = 1 分钟，最近 3 小时；与楼层状态卡同一份后端分钟统计）
+const engineCells = ref([])      // 后端最近 3 小时分钟统计（floor-status?minutes=180）
+const lossThresh = ref(10)       // 降级丢包阈值（接口下发，与 P2 告警同口径）
 const runs = ref([])            // 本楼层近 7 天扫描记录（不含明细，供在线趋势图与最新明细取数）
 const detail = ref(null)        // 当前展示的逐 IP 明细
 const detailLoading = ref(false)
 const scanChartPoints = ref([])
 let rttChart = null, scanChart = null
+let liveTimer = null // 状态/心跳 15s 实时刷新（图表不重绘）
 
 const palette = ['#2f81f7', '#05c96b', '#ffc107', '#dc3545', '#6f42c1', '#20c997', '#fd7e14', '#adb5bd']
 
@@ -168,12 +171,24 @@ function mk(series, yTitle, labelOf) {
   return { labels, datasets, yTitle }
 }
 
+async function fetchStatus() {
+  const d = await api.get('/api/admin/floor-status?minutes=180')
+  floor.value = (d.floors || []).find(f => f.id === floorId) || {}
+  if (d.loss_thresh > 0) lossThresh.value = d.loss_thresh
+  // 详情页整段 3 小时心跳都用后端同一份分钟统计（不再是引擎 60min + VM 历史两源合并），
+  // 与楼层状态卡/告警同一数据、同一判定；当前分钟按状态兜底。
+  engineCells.value = minuteCells(floor.value.minutes || [], lossThresh.value)
+  hbCells.value = applyStatusToCurrent(engineCells.value, floor.value.status)
+}
+
 async function load() {
-  try {
-    const d = await api.get('/api/admin/floor-status')
-    floor.value = (d.floors || []).find(f => f.id === floorId) || {}
-  } catch (e) { floor.value = {} }
+  try { await fetchStatus() } catch (e) { floor.value = {} }
   if (floor.value.id) { await Promise.all([drawConnectivity(), loadRuns()]) }
+}
+
+// 活动告警期间详情页必须跟楼层状态卡同步：15s 刷新状态徽章 + 最近 3 小时心跳（不重绘历史图表）
+async function refreshLive() {
+  try { await fetchStatus() } catch {}
 }
 
 // 联通率详情：关联线路（可多线）的连通性心跳/时延曲线，24h 平均连通率进 KPI
@@ -181,13 +196,6 @@ async function drawConnectivity() {
   const names = (floor.value.line_stats || []).map(l => l.name)
   if (!names.length) return
   const pat = linePattern(names)
-  // 心跳格：1 格 = 1 分钟（avg by (line, target) 的 [300s] 滚动窗口 step=60，与降质告警 5min 窗口
-  // 同款——vmMinuteCells 逐点按目标丢包率下中位数判黄格），取近 3 小时；终点前移 90s 避开在途分钟
-  const end = dayjs().unix() - 90
-  const grid = await fetchSeries(`avg by (line, target) (avg_over_time(nw_ping_ok{line=~"${pat}"}[300s]))`, 3, 60, { start: end - 3 * 3600, end }).catch(() => [])
-  if (!grid.length) return
-  hbCells.value = vmMinuteCells(grid)
-  hbEnd.value = end
   hasLineData.value = true
   // v-if 刚放行时 canvas 尚未入 DOM（Vue 异步渲染），等一拍再取元素画图
   await nextTick()
@@ -233,6 +241,12 @@ async function selectRun(r) {
   finally { detailLoading.value = false }
 }
 
-onMounted(load)
-onUnmounted(() => { for (const c of [rttChart, scanChart]) c && c.destroy() })
+onMounted(async () => {
+  await load()
+  liveTimer = setInterval(refreshLive, 15000)
+})
+onUnmounted(() => {
+  if (liveTimer) clearInterval(liveTimer)
+  for (const c of [rttChart, scanChart]) c && c.destroy()
+})
 </script>

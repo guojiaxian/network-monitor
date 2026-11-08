@@ -62,10 +62,13 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
-import { fmtTime, minuteCells } from '../utils'
+import { fmtTime, minuteCells, applyStatusToCurrent } from '../utils'
 
 // 心跳格：后端已按关联线路并集汇总到楼层（1 格 = 1 分钟）
-function hbOf(f) { return minuteCells(f.minutes, lossThresh.value) }
+function hbOf(f) {
+  // 当前分钟按楼层状态（最差线路）兜底，避免"已中断/降质"时当前格仍为绿色。
+  return applyStatusToCurrent(minuteCells(f.minutes, lossThresh.value), f.status)
+}
 
 // 楼层状态：与线路状态同款卡片，按楼层聚合——状态取关联线路最差（后端 /api/admin/floor-status），
 // 在线 IP 为本楼层最近一次扫描结果（区别于线路页的跨楼层求和）。
