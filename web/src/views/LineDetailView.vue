@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <button type="button" class="btn btn-sm btn-outline-secondary me-2" @click="goBack(router, '/lines')">← 返回</button>
-      <h4 class="mb-0">{{ line.name || '线路详情' }}</h4>
+      <h4 class="mb-0">📈 {{ line.name || '线路详情' }}</h4>
       <StatusBadge :status="status" class="ms-3" />
     </div>
 

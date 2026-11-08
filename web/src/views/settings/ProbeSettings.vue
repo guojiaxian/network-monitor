@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">探测配置</h4>
+        <h4 class="mb-0">🛰️ 探测配置</h4>
         <div class="text-secondary small mt-1">全部探测/监测的周期、间隔、超时在此集中配置；探针侧约 60 秒下发生效，中心侧约 30 秒生效</div>
       </div>
     </div>

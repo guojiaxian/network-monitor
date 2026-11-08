@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">探测历史</h4>
+        <h4 class="mb-0">📜 探测历史</h4>
         <div class="text-secondary small mt-1">逐条探测记录查询（服务端分页，单次最长 31 天；时序库存留 2 年）</div>
       </div>
       <button class="nw-btn nw-btn-neutral nw-btn-spin ms-auto" :disabled="loading" @click="reload" title="仅重新拉取页面数据显示，不触发探测">

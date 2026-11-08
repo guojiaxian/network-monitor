@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">总览</h4>
+        <h4 class="mb-0">📋 总览</h4>
         <div class="text-secondary small mt-1">每 10 秒自动刷新<span v-if="err" class="text-danger ms-2">{{ err }}</span></div>
       </div>
     </div>

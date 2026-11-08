@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">告警中心</h4>
+        <h4 class="mb-0">🔔 告警中心</h4>
         <div class="text-secondary small mt-1">维护期需要暂停某线路告警？到 <router-link to="/settings/alert">系统设置 → 告警策略</router-link> 创建静默窗口。</div>
       </div>
       <button class="nw-btn nw-btn-neutral ms-auto" @click="load" title="仅重新拉取页面数据显示，不触发探测">

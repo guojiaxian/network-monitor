@@ -1,6 +1,6 @@
 <template>
   <div class="container" style="max-width: 720px; padding-top: 6vh">
-    <h3 class="mb-1">物探中心网络监控系统 · 初始化</h3>
+    <h3 class="mb-1">🛰️ 物探中心网络监控系统 · 初始化</h3>
     <div class="text-secondary small mb-2">NetWatch</div>
     <p class="text-secondary">首次部署向导：创建管理员 → 邮件服务器 → 录入线路。后两步可跳过稍后在“系统设置”中完成。</p>
 

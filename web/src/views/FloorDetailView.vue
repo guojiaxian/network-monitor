@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <button type="button" class="btn btn-sm btn-outline-secondary me-2" @click="goBack(router, '/floor-status')">← 返回</button>
-      <h4 class="mb-0">{{ floor.name || '楼层详情' }}</h4>
+      <h4 class="mb-0">🏢 {{ floor.name || '楼层详情' }}</h4>
       <StatusBadge :status="floor.status || 'unknown'" class="ms-3" />
       <code class="ms-3">{{ floor.cidr || '未配置网段' }}</code>
     </div>

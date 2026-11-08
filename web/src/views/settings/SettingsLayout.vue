@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">系统设置</h4>
+        <h4 class="mb-0">⚙️ 系统设置</h4>
         <div class="text-secondary small mt-1">通知 / 告警 / 采集 / 报表 / 账号，各页独立保存</div>
       </div>
     </div>

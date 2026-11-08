@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-2">
       <button type="button" class="btn btn-sm btn-outline-secondary me-2" @click="goBack(router, '/probes/manage')">← 返回</button>
-      <h5 class="mb-0">网页终端 · {{ probeName }}</h5>
+      <h5 class="mb-0">🖥️ 网页终端 · {{ probeName }}</h5>
       <span v-if="closed" class="badge bg-secondary ms-3">已断开</span>
       <span v-else class="badge bg-success ms-3">已连接</span>
       <button class="btn btn-sm btn-outline-secondary ms-auto" @click="reconnect">重新连接</button>

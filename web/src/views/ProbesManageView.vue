@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">探针配置</h4>
+        <h4 class="mb-0">🛠️ 探针配置</h4>
         <div class="text-secondary small mt-1">绑定线路、SSH 运维与版本升级；探针健康状态在 <router-link to="/probes">探针状态</router-link> 页查看</div>
       </div>
     </div>

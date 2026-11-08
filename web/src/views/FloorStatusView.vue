@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">楼层状态</h4>
+        <h4 class="mb-0">🏢 楼层状态</h4>
         <div class="text-secondary small mt-1">以楼层为单位汇总关联线路的探针状态与最近一次 IP 扫描 · 每 15 秒自动刷新<span v-if="refreshMsg" class="text-success ms-2">{{ refreshMsg }}</span><span v-if="err" class="text-danger ms-2">{{ err }}</span></div>
       </div>
       <button class="nw-btn nw-btn-accent nw-btn-spin ms-auto" :disabled="refreshing" @click="refreshNow"

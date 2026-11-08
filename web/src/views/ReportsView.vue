@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">报表</h4>
+        <h4 class="mb-0">📊 报表</h4>
         <div class="text-secondary small mt-1">连通性 / 告警 / 测速等运维汇总报告，定时自动生成，也可在此手动补生成并导出 Word</div>
       </div>
       <select v-model="kind" class="form-select form-select-sm w-auto ms-auto" @change="load">

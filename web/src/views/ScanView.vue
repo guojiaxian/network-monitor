@@ -2,7 +2,7 @@
   <div>
     <div class="d-flex align-items-center mb-3">
       <div>
-        <h4 class="mb-0">IP 扫描</h4>
+        <h4 class="mb-0">🔎 IP 扫描</h4>
         <div class="text-secondary small mt-1">中心服务器对所选楼层子网逐 IP ping（单包）；禁 ping 的主机（如 Windows 默认防火墙）会显示离线；每次扫描按网段各留一条记录，点击记录行可展开查看逐 IP 结果</div>
       </div>
       <router-link class="nw-btn nw-btn-neutral ms-auto" :to="selected.length === 1 ? { path: '/history', query: { type: 'ipscan', floor: selected[0] } } : { path: '/history', query: { type: 'ipscan' } }">
