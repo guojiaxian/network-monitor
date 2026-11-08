@@ -3,21 +3,21 @@
     <aside class="nw-sidebar">
       <div class="brand">物探中心网络监控系统<div class="brand-en">NetWatch</div></div>
       <div class="nw-nav-group">监控展示</div>
-      <router-link to="/">总览</router-link>
-      <router-link to="/alerts">告警中心</router-link>
-      <router-link to="/probes">探针状态</router-link>
-      <router-link to="/line-status">线路状态</router-link>
-      <router-link to="/floor-status">楼层状态</router-link>
-      <router-link to="/scan">IP 扫描</router-link>
-      <router-link to="/history">探测历史</router-link>
-      <router-link to="/reports">报表</router-link>
+      <router-link to="/">📋 总览</router-link>
+      <router-link to="/alerts">🔔 告警中心</router-link>
+      <router-link to="/probes">📡 探针状态</router-link>
+      <router-link to="/line-status">📈 线路状态</router-link>
+      <router-link to="/floor-status">🏢 楼层状态</router-link>
+      <router-link to="/scan">🔎 IP 扫描</router-link>
+      <router-link to="/history">📜 探测历史</router-link>
+      <router-link to="/reports">📊 报表</router-link>
       <div class="nw-nav-group">配置管理</div>
-      <router-link to="/floors">楼层配置</router-link>
-      <router-link to="/lines">线路配置</router-link>
-      <router-link to="/probes/manage">探针配置</router-link>
-      <router-link to="/probing">探测配置</router-link>
+      <router-link to="/floors">🏢 楼层配置</router-link>
+      <router-link to="/lines">🌐 线路配置</router-link>
+      <router-link to="/probes/manage">🛠️ 探针配置</router-link>
+      <router-link to="/probing">🛰️ 探测配置</router-link>
       <!-- 系统设置一级直达：二级页签在页内（SettingsLayout.vue），侧栏不再挂下拉菜单 -->
-      <router-link to="/settings">系统设置</router-link>
+      <router-link to="/settings">⚙️ 系统设置</router-link>
       <div class="foot">物探中心网络监控系统 · v{{ appVersion }}</div>
     </aside>
     <div class="nw-body">
