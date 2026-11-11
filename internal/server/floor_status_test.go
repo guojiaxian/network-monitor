@@ -105,8 +105,9 @@ func TestMinuteStats(t *testing.T) {
 		agg.pingWin = append(agg.pingWin, pingRec{target: "t", ok: i == 0, ts: base})
 	}
 	agg.pingWin = append(agg.pingWin, pingRec{target: "t", ok: true, ts: base.Add(2 * time.Minute)})
-	got := agg.minuteStats(5)
-	want := []MinStat{{T: base.Unix(), N: 2, F: 1}, {T: base.Add(2 * time.Minute).Unix(), N: 1, F: 0}}
+	got := agg.minuteStats()
+	// 首分钟 2 轮：1 成功(0%) + 1 失败(按 100% 兜底) → L=50
+	want := []MinStat{{T: base.Unix(), N: 2, F: 1, L: 50}, {T: base.Add(2 * time.Minute).Unix(), N: 1, F: 0}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("分钟聚合不符：%v", got)
 	}

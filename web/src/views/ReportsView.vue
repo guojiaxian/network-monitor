@@ -26,19 +26,23 @@
     <div class="nw-card mb-3">
       <div class="text-secondary small mb-2">点击任意一行，可在下方查看该报表摘要（无需导出）</div>
       <table class="table nw-table table-sm align-middle">
-        <thead><tr><th>类型</th><th>统计周期</th><th>生成时间</th><th style="width:300px"></th></tr></thead>
+        <thead><tr><th>类型</th><th>统计周期</th><th>生成时间</th><th>邮件发送</th><th style="width:300px"></th></tr></thead>
         <tbody>
           <tr v-for="r in reports" :key="r.id" class="rep-row" :class="{ 'table-active': detailId === r.id }" @click="view(r)">
             <td><span class="badge" :class="kindBadge(r.kind)">{{ kindName(r.kind) }}</span></td>
             <td>{{ fmt(r.period_start) }} ~ {{ fmt(r.period_end) }}</td>
             <td class="small text-secondary">{{ fmt(r.created_at) }}</td>
+            <td class="small">
+              <span v-if="r.mailed_at" class="text-secondary">{{ fmt(r.mailed_at) }}</span>
+              <span v-else class="badge bg-warning text-dark">待发送</span>
+            </td>
             <td class="text-end">
               <button class="btn btn-sm btn-outline-primary me-1" @click.stop="view(r)">{{ detailId === r.id ? '收起' : '查看摘要' }}</button>
               <a class="btn btn-sm btn-success me-1" :href="'#/reports'" @click.prevent.stop="exportDocx(r)">导出 Word</a>
               <a class="btn btn-sm btn-outline-success" :href="'#/reports'" @click.prevent.stop="exportCSV(r)">导出 CSV</a>
             </td>
           </tr>
-          <tr v-if="!reports.length"><td colspan="4" class="text-secondary text-center py-4">暂无报表，可手动生成；每日/每周/每月也会按设置自动生成并邮件推送</td></tr>
+          <tr v-if="!reports.length"><td colspan="5" class="text-secondary text-center py-4">暂无报表，可手动生成；每日/每周/每月也会按设置自动生成并邮件推送</td></tr>
         </tbody>
       </table>
     </div>

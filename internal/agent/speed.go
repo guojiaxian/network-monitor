@@ -28,8 +28,8 @@ import (
 const (
 	speedDLBudget   = 60 * time.Second // ookla 下载阶段上限
 	speedULBudget   = 45 * time.Second // ookla 上传阶段上限
-	speedHTTPWindow = 15 * time.Second // 多连接引擎采样窗口
-	speedHTTPConns  = 16               // 多连接引擎并发连接数（单 CDN 流约 20~30Mbps，1C 探针实测 64 连接无增益）
+	SpeedHTTPWindow = 15 * time.Second // 多连接引擎采样窗口
+	SpeedHTTPConns  = 16               // 多连接引擎并发连接数（单 CDN 流约 20~30Mbps，1C 探针实测 64 连接无增益）
 	speedMinBytes   = 50 << 20         // 多连接引擎有效判定（窗口内总字节 ≥50MB，防把握手失败算成低速）
 )
 
@@ -221,7 +221,7 @@ func httpSpeedTest(ctx context.Context, urls []string, sourceIP string) *proto.S
 	if len(urls) == 0 {
 		return speedFailSample("http", "下载源池为空")
 	}
-	ctx, cancel := context.WithTimeout(ctx, speedHTTPWindow+15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, SpeedHTTPWindow+15*time.Second)
 	defer cancel()
 
 	d := &net.Dialer{Timeout: 10 * time.Second}
@@ -231,7 +231,7 @@ func httpSpeedTest(ctx context.Context, urls []string, sourceIP string) *proto.S
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: d.DialContext, Proxy: nil, DisableKeepAlives: true,
-			MaxIdleConnsPerHost: speedHTTPConns,
+			MaxIdleConnsPerHost: SpeedHTTPConns,
 		},
 	}
 
@@ -239,9 +239,9 @@ func httpSpeedTest(ctx context.Context, urls []string, sourceIP string) *proto.S
 	var mu sync.Mutex
 	var firstErr error
 	start := time.Now()
-	deadline := start.Add(speedHTTPWindow)
+	deadline := start.Add(SpeedHTTPWindow)
 	var wg sync.WaitGroup
-	for i := 0; i < speedHTTPConns; i++ {
+	for i := 0; i < SpeedHTTPConns; i++ {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
@@ -276,7 +276,7 @@ func httpSpeedTest(ctx context.Context, urls []string, sourceIP string) *proto.S
 	}
 	return &proto.Sample{
 		Type:   proto.TypeSpeed,
-		Target: fmt.Sprintf("cdn-multi×%dconn", speedHTTPConns),
+		Target: fmt.Sprintf("cdn-multi×%dconn", SpeedHTTPConns),
 		OK:     true,
 		Extra:  map[string]float64{"down_mbps": float64(total) * 8 / elapsed.Seconds() / 1e6},
 	}

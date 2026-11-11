@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	flushSize     = 200             // 实时批量上限
-	flushInterval = 3 * time.Second // 定时刷盘
-	maxCacheBytes = 48 << 20        // 断网缓存上限（超过后轮转丢弃最旧文件）
-	cacheBatchN   = 500             // 补传时每批条数
+	ReporterFlushSize     = 200             // 实时批量上限
+	ReporterFlushInterval = 3 * time.Second // 定时刷盘
+	ReporterCacheMaxBytes = 48 << 20        // 断网缓存上限（超过后轮转丢弃最旧文件）
+	cacheBatchN           = 500             // 补传时每批条数
 )
 
 // reporter 聚合探测结果并批量上报；上报失败写入本地 JSONL 缓存，
@@ -33,15 +33,15 @@ type reporter struct {
 func newReporter(a *Agent) *reporter { return &reporter{a: a} }
 
 func (r *reporter) run(ctx context.Context) {
-	buf := make([]proto.Sample, 0, flushSize+1)
-	tick := time.NewTicker(flushInterval)
+	buf := make([]proto.Sample, 0, ReporterFlushSize+1)
+	tick := time.NewTicker(ReporterFlushInterval)
 	defer tick.Stop()
 
 	for {
 		select {
 		case s := <-r.a.sampleCh:
 			buf = append(buf, s)
-			if len(buf) >= flushSize {
+			if len(buf) >= ReporterFlushSize {
 				r.flush(ctx, &buf)
 			}
 		case <-tick.C:
@@ -90,7 +90,7 @@ func (r *reporter) cacheAppend(samples []proto.Sample) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p := r.a.cachePath()
-	if st, err := os.Stat(p); err == nil && st.Size() > maxCacheBytes {
+	if st, err := os.Stat(p); err == nil && st.Size() > ReporterCacheMaxBytes {
 		_ = os.Rename(p, p+".1") // 旧缓存留给人工处理，重新积累
 	}
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

@@ -153,9 +153,20 @@ function render(id, cfg) {
     data: { labels: cfg.labels, datasets: cfg.datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: 'index', intersect: false },
+      // 悬停只显示最近一条线的名称，避免大提示框遮挡折线
+      interaction: { mode: 'nearest', intersect: false },
       scales: { y: { title: { display: true, text: cfg.yTitle } } },
-      plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } },
+      plugins: {
+        legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          displayColors: false,
+          position: 'nearest',
+          callbacks: {
+            title: () => '',
+            label: (ctx) => ctx.dataset.label || '',
+          },
+        },
+      },
     },
   })
 }

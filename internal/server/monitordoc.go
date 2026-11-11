@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"netwatch/internal/agent"
 	"netwatch/internal/proto"
 )
 
@@ -48,6 +49,21 @@ type DocAlert struct {
 	Name     string `json:"name"`
 	Trigger  string `json:"trigger"`
 	Recovery string `json:"recovery"`
+}
+
+// DocColor 心跳格颜色图例（前端直接渲染色块）
+type DocColor struct {
+	Color string `json:"color"` // 十六进制色值，与 web/src/style.css .hbg-* 一致
+	Name  string `json:"name"`
+	Rule  string `json:"rule"`
+}
+
+// DocHeartbeat 心跳格说明：粒度、窗口、公共注记与颜色表
+type DocHeartbeat struct {
+	Cell    string     `json:"cell"`
+	Windows string     `json:"windows"`
+	Note    string     `json:"note,omitempty"`
+	Colors  []DocColor `json:"colors"`
 }
 
 // ---- 取值小工具 ----
@@ -148,9 +164,14 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		sp = DefaultSpeedSettings()
 	}
 	sp.normalize()
+	// 并发口径随 max_concurrent 配置走：1=逐条串行（2026-11-10 实测共享上行带宽下串行更准，见 AGENTS.md），N=同时最多 N 条
+	concTxt := "逐条串行"
+	if sp.MaxConcurrent > 1 {
+		concTxt = fmt.Sprintf("同时最多 %d 条并行", sp.MaxConcurrent)
+	}
 	speedRow := DocRow{
-		Name:    "定时测速（" + dStr(sp.Engine, "http") + " 引擎，全部探针并行）",
-		Desc:    "16 连接 CDN 采样 15s ×" + itoa(sp.Runs) + " 次取平均；低于阈值 1 分钟后自动复测一轮（固定），仍低报「网速慢」；「立即刷新」按钮即触发一轮",
+		Name:    "定时测速（" + dStr(sp.Engine, "http") + " 引擎，" + concTxt + "）",
+		Desc:    fmt.Sprintf("%d 连接 CDN 采样 %s ×%d 次取平均（代码固定）", agent.SpeedHTTPConns, secs(int(agent.SpeedHTTPWindow.Seconds())), sp.Runs),
 		Period:  mins(sp.IntervalMin),
 		Timeout: "单轮 " + mins(sp.TimeoutMin),
 		Status:  onOff(sp.Enabled),
@@ -164,8 +185,8 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	}
 	scan.normalize()
 	scanRow := DocRow{
-		Name:    "楼层 IP 扫描（逐 IP ping 单包，并发 64〔内置固定〕）",
-		Desc:    "手动与定时共用同一把闸（同一时刻只跑一批）；禁 ping 的主机会显示离线",
+		Name:    "楼层 IP 扫描",
+		Desc:    fmt.Sprintf("逐 IP ping 单包；并发 %d，单网段上限 /22（%d 个地址）；手动与定时共用一把闸；禁 ping 主机显示离线", scanConcurrency, scanMaxHosts),
 		Period:  mins(scan.IntervalMin),
 		Timeout: fmt.Sprintf("%dms/IP", scan.TimeoutMs),
 		Status:  onOff(scan.Enabled),
@@ -176,8 +197,8 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	var im MonitorSettings
 	_ = getSetting("internal_monitors", &im)
 	monRow := DocRow{
-		Name:    "内→内服务监控（中心自探，Uptime Kuma 模式）",
-		Desc:    "复用探针同一套探测原语（带 1 次重试）；连续 3 次失败触发 P2，恢复即解除",
+		Name:    "内→内服务监控（中心自探）",
+		Desc:    "复用探针探测原语（带 1 次重试）；连续 3 次失败报 P2，恢复即解除",
 		Period:  "各项独立",
 		Timeout: "各项独立",
 		Status:  onOff(im.Enabled),
@@ -194,8 +215,8 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	var ind IndustrySettings
 	_ = getSetting("industry_monitors", &ind)
 	indRow := DocRow{
-		Name:    "行业网监测（仅 ICMP，不做其他探测以免被封）",
-		Desc:    "复用探针 ping 原语（带 1 次重试）；连续 3 次失败触发 P2，恢复即解除",
+		Name:    "行业网监测（仅 ICMP）",
+		Desc:    "连续 3 次失败报 P2，恢复即解除",
 		Period:  "各项独立",
 		Timeout: "各项独立",
 		Status:  onOff(ind.Enabled),
@@ -205,6 +226,25 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		indRow.Items = append(indRow.Items, DocItem{
 			Name: it.Name, Target: it.Target,
 			Period: secs(monClampInterval(it.IntervalS)), Timeout: secs(monClampTimeout(it.TimeoutS)),
+		})
+	}
+
+	// ---- 楼层网关 / 汇聚设备监测 ----
+	var fn FloorNetSettings
+	_ = getSetting("floor_net_monitors", &fn)
+	fn.normalize()
+	floorNetRow := DocRow{
+		Name:    "楼层网关与汇聚设备（中心自探）",
+		Desc:    "网关读楼层配置的 gateway；汇聚/AC/104 汇聚读锚点管理 IP；相同 IP 只探测一次，连续 " + itoa(fn.FailN) + " 次失败报 P1",
+		Period:  secs(fn.IntervalS) + " ±10%",
+		Timeout: secs(fn.TimeoutS),
+		Status:  onOff(fn.Enabled),
+		Source:  "楼层配置页 · 探测配置页",
+	}
+	for _, a := range fn.Anchors {
+		floorNetRow.Items = append(floorNetRow.Items, DocItem{
+			Name: a.Name + "（" + a.Floors + "）", Target: a.Target,
+			Period: secs(fn.IntervalS) + " ±10%", Timeout: secs(fn.TimeoutS),
 		})
 	}
 
@@ -220,8 +260,8 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		snTimeout = 5
 	}
 	snmpRow := DocRow{
-		Name:    "SNMP 真实流量采集（防火墙 WAN 口）",
-		Desc:    "只读轮询字节计数器差分出每线真实上下行速率，写入时序库供线路详情查看",
+		Name:    "SNMP 流量采集（防火墙 WAN 口）",
+		Desc:    "只读轮询字节计数器差分出每线真实上下行速率，写入时序库",
 		Period:  secs(snInterval),
 		Timeout: secs(snTimeout),
 		Status:  onOff(sn.Enabled),
@@ -232,13 +272,9 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	var sl SyslogSettings
 	_ = getSetting("syslog_settings", &sl)
 	sl.normalize()
-	slProto := "UDP"
-	if sl.Proto == "tcp" {
-		slProto = "TCP"
-	}
 	syslogRow := DocRow{
-		Name:    "日志外发（syslog → 日志审计服务器）",
-		Desc:    "告警 / 测速 / IP 扫描 / 出口 IP 变化四类事件，CEF 或 KV 格式，" + slProto + " 可选；被静默的告警不外发",
+		Name:    "日志外发（syslog）",
+		Desc:    "告警 / 测速 / IP 扫描 / 出口变化四类事件；CEF 或 KV、UDP 或 TCP；静默告警不外发",
 		Period:  "事件驱动",
 		Timeout: secs(sl.TimeoutS),
 		Status:  onOff(sl.Enabled),
@@ -251,8 +287,8 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	dr := DefaultReportSettings()
 	repTxt, repOn := reportScheduleText(rs, dr)
 	reportRow := DocRow{
-		Name:   "日报 / 周报 / 月报（自动生成并邮件推送）",
-		Desc:   "按报表推送页配置的时刻命中触发，统计上一个自然周期",
+		Name:   "日报 / 周报 / 月报",
+		Desc:   "按配置时刻生成上一个自然周期并邮件推送",
 		Period: repTxt,
 		Status: onOff(repOn),
 		Source: "报表推送页",
@@ -264,7 +300,7 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		als = DefaultAlertSettings()
 	}
 	blind := dInt(als.BlindSecs, 60)
-	lossWin := dInt(als.LossWindowMin, 5)
+	lossWin := dInt(als.LossWindowMin, 3)
 	lossPct := als.LossPctThresh
 	if lossPct <= 0 {
 		lossPct = 10
@@ -276,65 +312,36 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 		tfTxt = fmt.Sprintf("%d 分钟", tfWin/60)
 	}
 
-	summary := DocGroup{
-		Title: "当前生效配置速览",
-		Note:  "数值实时取自系统配置；详细机制见下方分组",
-		Rows: []DocRow{
-			{
-				Name:    "探测周期与目标",
-				Desc:    "ICMP " + icmpTxt + "；TCP " + tcpTxt + "；DNS " + dnsTxt + " → " + dStr(cfg.DNSDomain, def.DNSDomain) + "；HTTP " + httpTxt,
-				Period:  fmt.Sprintf("ICMP %s / TCP %s / DNS %s / HTTP %s", secs(pingIv), secs(tcpIv), secs(dnsIv), secs(httpIv)),
-				Timeout: secs(tmo), Status: "on", Source: "探测配置页",
-			},
-			{
-				Name:   "探测重试 / 心跳 / 出口识别",
-				Desc:   fmt.Sprintf("失败后重试 %d 次（间隔 %dms），任一次成功即成功；出口识别超时 8s", retryN, retryMs),
-				Period: fmt.Sprintf("心跳 %s / 出口 %s", secs(hbSec), mins(egMin)),
-				Status: "on", Source: "探测配置页 · 上报与重试",
-			},
-			{
-				Name:   "告警判定",
-				Desc:   fmt.Sprintf("盲区 >%s；线路中断 45s 无成功；楼层网关连续 3 次失败；降质 %dmin 丢包中位数 >%g%%；探测异常 %s；评估 %s", secs(blind), lossWin, lossPct, tfTxt, secs(evalIv)),
-				Period: secs(evalIv), Status: "on", Source: "告警策略页 / 探测配置页",
-			},
-			{
-				Name:   "心跳展示",
-				Desc:   "1 格 = 1 分钟；红=中断、紫=降质、橙=有失败已恢复、灰=无数据、绿=正常；状态/总览/大屏最近 60 分钟，详情页最近 3 小时",
-				Period: "60min / 3h", Status: "fixed", Source: "内置固定（内存环 3h）",
-			},
-		},
-	}
 	groups := []DocGroup{
-		summary,
 		{
-			Title: "一、自动探测 / 监测项 · 楼层探针",
-			Note:  "目标与间隔在「探测配置」页可改（约 30s 下发生效）；间隔带 ±10% 随机抖动防同步风暴〔内置固定〕；每轮探测失败自动重试，任一次成功即成功；线路判活 = 任一协议 45s 内有成功即可达〔内置固定〕",
+			Title: "一、楼层探针",
+			Note:  "目标/周期/超时/重试在「探测配置」页修改；间隔带 ±10% 抖动（代码固定）",
 			Rows: []DocRow{
-				{Name: "网关探测（区分楼层 / 线路故障域）", Period: secs(pingIv) + " ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页 · 探测周期与超时"},
-				{Name: fmt.Sprintf("公网 ICMP（当前 %d 目标投票）", icmpN), Period: secs(pingIv) + " ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页 · 探测目标"},
-				{Name: fmt.Sprintf("TCP 连接（当前 %d 目标）", tcpN), Period: secs(tcpIv) + " ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页 · 探测目标"},
-				{Name: fmt.Sprintf("DNS 解析（%d 个服务器）+ HTTP 访问（%d 个目标）", dnsN, httpN), Period: "DNS " + secs(dnsIv) + " / HTTP " + secs(httpIv) + "，均 ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页 · 探测目标"},
-				{Name: "探测重试（每轮失败后）", Desc: "任一次成功即成功，全部失败才判断连；IP 扫描不重试以保扫描速度", Period: "重试 " + itoa(retryN) + " 次", Timeout: "间隔 " + itoa(retryMs) + "ms", Status: "on", Source: "探测配置页 · 探测周期与超时"},
+				{Name: "网关探测（区分楼层 / 线路故障域）", Desc: "区分楼层故障 / 线路故障", Period: secs(pingIv) + " ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页"},
+				{Name: fmt.Sprintf("公网 ICMP（当前 %d 目标投票）", icmpN), Desc: icmpTxt, Period: secs(pingIv) + " ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页"},
+				{Name: fmt.Sprintf("TCP 连接（当前 %d 目标）", tcpN), Desc: tcpTxt, Period: secs(tcpIv) + " ±10%", Timeout: secs(tmo), Status: "on", Source: "探测配置页"},
+				{Name: fmt.Sprintf("DNS 解析（%d 个服务器）+ HTTP 访问（%d 个目标）", dnsN, httpN), Desc: dnsTxt + " → " + dStr(cfg.DNSDomain, def.DNSDomain) + "；" + httpTxt, Period: "DNS " + secs(dnsIv) + " / HTTP " + secs(httpIv), Timeout: secs(tmo), Status: "on", Source: "探测配置页"},
+				{Name: "探测重试（每轮失败后）", Desc: "任一次成功即成功；IP 扫描不重试", Period: "重试 " + itoa(retryN) + " 次", Timeout: "间隔 " + itoa(retryMs) + "ms", Status: "on", Source: "探测配置页"},
 			},
 		},
 		{
-			Title: "二、自动探测 / 监测项 · 探针 → 中心上报",
-			Note:  "样本批量上报由独立通道驱动（每 3s 冲刷〔内置固定〕）；探针断网样本本地缓存 ≤48MB，恢复自动补传",
+			Title: "二、探针 → 中心上报",
 			Rows: []DocRow{
-				{Name: "心跳 + 探针资源（CPU / 内存 / 磁盘）", Desc: "资源配置告警 = >90% 连续 3 次心跳（≈" + secs(hbSec*3) + "）", Period: secs(hbSec), Status: "on", Source: "探测配置页 · 上报与重试"},
-				{Name: "出口 IP / 运营商 / 归属地识别", Desc: "出口变化自动对账：命中其他线路=改绑；无匹配=自动回写绑定线路，线路详情页留痕", Period: mins(egMin), Timeout: "8s〔固定〕", Status: "on", Source: "探测配置页 · 上报与重试"},
-				{Name: "配置轮询（探测配置下发生效）", Period: secs(30), Status: "fixed", Source: "内置固定"},
+				{Name: "心跳 + 探针资源（CPU / 内存 / 磁盘）", Desc: "CPU/内存/磁盘 >90% 连续 3 次心跳报 P2", Period: secs(hbSec), Status: "on", Source: "探测配置页 · 上报与重试"},
+				{Name: "出口 IP / 运营商 / 归属地识别", Desc: "出口变化自动对账/改绑/回写并留痕", Period: mins(egMin), Timeout: "8s（代码固定）", Status: "on", Source: "探测配置页 · 上报与重试"},
+				{Name: "配置轮询", Desc: "探测配置修改后的生效延迟", Period: secs(int(agent.ConfigPollInterval.Seconds())), Status: "fixed", Source: "内置固定"},
 				speedRow,
 			},
 		},
 		{
-			Title: "三、自动探测 / 监测项 · 中心服务器",
-			Note:  "告警评估对全部探测数据判定（触发与恢复条件见下表）；各项配置入口见行尾标注",
+			Title: "三、中心服务器",
+			Note:  "告警评估对全部探测数据判定；触发与恢复条件见下表",
 			Rows: []DocRow{
-				{Name: "告警评估（对全部探测数据判定，见下表）", Period: secs(evalIv), Status: "on", Source: "探测配置页 · 中心引擎"},
+				{Name: "告警评估", Period: secs(evalIv), Status: "on", Source: "探测配置页 · 中心引擎"},
 				scanRow,
 				monRow,
 				indRow,
+				floorNetRow,
 				snmpRow,
 				syslogRow,
 				reportRow,
@@ -345,18 +352,44 @@ func monitorDocData(getSetting func(string, any) error) map[string]any {
 	alerts := []DocAlert{
 		{Level: "P0", Name: "监控盲区", Trigger: "探针心跳缺失 > " + secs(blind) + "〔告警策略页可配〕", Recovery: "心跳恢复"},
 		{Level: "P1", Name: "楼层中断", Trigger: "网关连续 3 次 ping 失败", Recovery: "网关恢复可达"},
-		{Level: "P1", Name: "线路中断", Trigger: "网关可达且探针心跳/网关样本在 45s 内，任一协议 45s 内无成功；全部有效探针一致（分歧报 P2 冲突）", Recovery: "任一公网目标恢复"},
+		{Level: "P1", Name: "楼层网关不可达", Trigger: "核心/共同网关连续 " + itoa(fn.FailN) + " 次 ICMP 失败（单包，中心自探）", Recovery: "网关恢复可达"},
+		{Level: "P1", Name: "楼层汇聚设备不可达", Trigger: "汇聚交换机/AC/104 汇聚管理 IP 连续 " + itoa(fn.FailN) + " 次 ICMP 失败", Recovery: "设备恢复可达"},
+		{Level: "P1", Name: "线路中断", Trigger: "网关可达且探针心跳/网关样本在 " + secs(int(aliveWindow.Seconds())) + " 内，任一协议 " + secs(int(aliveWindow.Seconds())) + " 内无成功；全部有效探针一致（分歧报 P2 冲突）", Recovery: "任一公网目标恢复"},
 		{Level: "P2", Name: "探针数据冲突", Trigger: "多探针线路中部分探针报中断、其余正常；线路大概率正常，优先检查异常探针", Recovery: "探针意见一致或恢复"},
-		{Level: "P2", Name: "线路降质", Trigger: fmt.Sprintf("%dmin 窗口各目标丢包率下中位数 >%g%%〔告警策略页可配〕（每目标 ≥10 样本同时成立；线路/楼层中断恢复后一个窗口内不评估，避免同一故障双重告警）", lossWin, lossPct), Recovery: "丢包回落"},
-		{Level: "P2", Name: "网速慢", Trigger: fmt.Sprintf("一轮均值 <%gMbps〔探测配置页可配〕→ 1 分钟后复测一轮仍低（等待固定）", sp.SlowMinMbps), Recovery: "任一轮实测达标"},
+		{Level: "P2", Name: "线路降质", Trigger: fmt.Sprintf("连续 %d 分钟每分钟两个目标丢包率下中位数 >%g%%〔告警策略页可配〕（每目标 ≥%d 轮）", lossWin, lossPct, lossMinuteMinRounds), Recovery: fmt.Sprintf("连续 %d 分钟回落到阈值 %d%%", lossWin, int(lossResolveRatio*100))},
+		{Level: "P2", Name: "短时严重丢包", Trigger: fmt.Sprintf("单分钟两个目标丢包率下中位数 ≥%d%%（每目标 ≥%d 轮）", severeLossPct, lossMinuteMinRounds), Recovery: fmt.Sprintf("回落到 <%g%%", severeLossPct*severeResolveRatio)},
+		{Level: "P2", Name: "网速慢", Trigger: fmt.Sprintf("一轮均值 <%gMbps〔探测配置页可配〕→ %d 分钟后复测一轮仍低（等待固定）", sp.SlowMinMbps, int(retestWaitMin.Minutes())), Recovery: "任一轮实测达标"},
 		{Level: "P2", Name: "服务 / 行业网不可达", Trigger: "连续 3 次探测失败", Recovery: "恢复即解除"},
 		{Level: "P2", Name: "探针资源紧张", Trigger: "内存或磁盘 >90% 连续 3 次心跳（≈" + secs(hbSec*3) + "）", Recovery: "回落 <80%"},
 		{Level: "P2", Name: "探测异常（TCP/DNS/HTTP）", Trigger: "某类探测全部目标连续失败 ≥ " + tfTxt + "〔探测配置页可配〕（单目标失败不告警）", Recovery: "任一目标恢复"},
 	}
 
+	heartbeat := DocHeartbeat{
+		Cell:    "1 格 = 1 分钟",
+		Windows: fmt.Sprintf("状态页/总览/大屏最近 60 分钟；线路/楼层详情最近 %d 小时", int(ringHistory.Hours())),
+		Note:    fmt.Sprintf("线路/楼层多探针取最差口径；格子只反映单分钟实际降质，常规 P2 需连续 %d 分钟、短时严重 P2 单分钟 ≥%d%% 才报（见下表）", lossWin, severeLossPct),
+		Colors: []DocColor{
+			{Color: "#05c96b", Name: "绿", Rule: "该分钟无丢包"},
+			{Color: "#f0883e", Name: "橙", Rule: "有丢包，但该分钟各目标丢包率下中位数 ≤ 阈值"},
+			{Color: "#a78bfa", Name: "紫", Rule: fmt.Sprintf("该分钟各目标丢包率下中位数 > %g%%（每目标 ≥%d 轮；单目标全断不标紫）", lossPct, lossMinuteMinRounds)},
+			{Color: "#dc3545", Name: "红", Rule: fmt.Sprintf("该分钟所有轮次 %d 包全丢", agent.PingBurstCount)},
+			{Color: "#adb5bd", Name: "灰", Rule: "该分钟无样本（停探/盲区）"},
+		},
+	}
+
+	notes := []string{
+		"告警触发/恢复自动通知：邮件格式与 Uptime Kuma 一致（[对象] [🔴 Down/✅ Up] 消息），默认仅报 P0/P1，P2 需在告警设置页开启「P2 告警也发邮件」；钉钉/企微 P0P1 恒推，P2 需在通知渠道页开启；支持按线路静默。",
+		"中心重启时未恢复告警自动收口；删除线路/探针/监控目标时对应告警自动收口。",
+		fmt.Sprintf("探测样本每 %s 或满 %d 条批量上报；断网本地缓存 ≤%dMB，恢复自动补传。", secs(int(agent.ReporterFlushInterval.Seconds())), agent.ReporterFlushSize, agent.ReporterCacheMaxBytes>>20),
+		fmt.Sprintf("探针样本时间快于服务器 >%d 分钟时按服务器时间钳位（请配置 NTP）。", int(clockSkewClamp.Minutes())),
+		fmt.Sprintf("IP 扫描记录保留 %d 天且最多 %d 条；告警、审计、报表不自动清理。", scanRunKeepDays, scanRunMaxRows),
+	}
+
 	return map[string]any{
 		"generated_at": time.Now().Format(time.RFC3339),
 		"groups":       groups,
+		"heartbeat":    heartbeat,
+		"notes":        notes,
 		"alerts":       alerts,
 	}
 }
@@ -369,26 +402,34 @@ func onOff(b bool) string {
 	return "off"
 }
 
-// reportScheduleText 报表计划的实时文案；返回 (文案, 是否有任一报表启用)
+// reportScheduleText 报表计划的实时文案；返回 (文案, 是否有任一报表启用)。
+// 生成时刻与发送时刻独立：发送时刻留空表示生成后立即发送。
 func reportScheduleText(rs, def ReportSettings) (string, bool) {
 	weekday := map[int]string{0: "周日", 1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六"}
+	timing := func(gen, send string, dflt string) string {
+		s := dStr(gen, dflt) + " 生成"
+		if strings.TrimSpace(send) == "" {
+			return s + "后立即发送"
+		}
+		return s + "、" + strings.TrimSpace(send) + " 发送"
+	}
 	var parts []string
 	if rs.DailyEnabled {
-		parts = append(parts, "日报 每日 "+dStr(rs.DailyAt, def.DailyAt))
+		parts = append(parts, "日报 每日 "+timing(rs.DailyAt, rs.DailySendAt, def.DailyAt))
 	}
 	if rs.WeeklyEnabled {
 		day := rs.WeeklyDay
 		if day < 0 || day > 6 {
 			day = def.WeeklyDay
 		}
-		parts = append(parts, "周报 每周"+weekday[day]+" "+dStr(rs.WeeklyAt, def.WeeklyAt))
+		parts = append(parts, "周报 每周"+weekday[day]+" "+timing(rs.WeeklyAt, rs.WeeklySendAt, def.WeeklyAt))
 	}
 	if rs.MonthlyEnabled {
 		mday := rs.MonthlyDay
 		if mday < 1 || mday > 28 {
 			mday = def.MonthlyDay
 		}
-		parts = append(parts, "月报 每月 "+itoa(mday)+" 日 "+dStr(rs.MonthlyAt, def.MonthlyAt))
+		parts = append(parts, "月报 每月 "+itoa(mday)+" 日 "+timing(rs.MonthlyAt, rs.MonthlySendAt, def.MonthlyAt))
 	}
 	if len(parts) == 0 {
 		return "未启用任何报表", false

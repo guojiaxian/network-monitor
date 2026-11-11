@@ -6,12 +6,19 @@
         <div class="col-md-3"><label class="form-label small mb-1">盲区判定（秒）</label><input v-model.number="als.blind_secs" type="number" min="30" max="3600" class="form-control form-control-sm" /></div>
         <div class="col-md-3"><label class="form-label small mb-1">中断判定窗口（秒）</label><input v-model.number="als.line_down_secs" type="number" min="5" max="3600" class="form-control form-control-sm" /></div>
         <div class="col-md-3"><label class="form-label small mb-1">降质丢包阈值（%）</label><input v-model.number="als.loss_pct_thresh" type="number" min="1" max="100" step="0.1" class="form-control form-control-sm" /></div>
-        <div class="col-md-3"><label class="form-label small mb-1">降质统计窗口（分钟）</label><input v-model.number="als.loss_window_min" type="number" min="1" max="60" class="form-control form-control-sm" /></div>
+        <div class="col-md-3"><label class="form-label small mb-1">连续降质分钟数</label><input v-model.number="als.loss_window_min" type="number" min="1" max="10" class="form-control form-control-sm" /></div>
         <div class="col-md-8"><label class="form-label small mb-1">P2 收件组（逗号分隔，留空用默认收件人）</label><input v-model="alsP2Str" class="form-control form-control-sm" /></div>
         <div class="col-md-8"><label class="form-label small mb-1">P0/P1 收件组（逗号分隔，留空用默认收件人）</label><input v-model="alsP0P1Str" class="form-control form-control-sm" /></div>
-        <div class="col-md-4 text-end align-self-end"><button class="btn btn-sm btn-primary" @click="saveALS">保存</button></div>
+        <div class="col-md-4 text-end align-self-end">
+          <div class="form-check form-check-inline me-2 mb-0">
+            <input id="mailp2" v-model="als.mail_send_p2" type="checkbox" class="form-check-input" />
+            <label for="mailp2" class="form-check-label">P2 告警也发邮件</label>
+          </div>
+          <button class="btn btn-sm btn-primary" @click="saveALS">保存</button>
+        </div>
       </div>
       <div v-if="alsMsg" class="small mt-2" :class="alsOk ? 'text-success' : 'text-danger'">{{ alsMsg }}</div>
+      <p class="text-secondary small mb-0 mt-2">告警邮件格式与 Uptime Kuma 一致；默认仅 P0/P1 发邮件，勾选后 P2（降质/网速慢/探测异常等）也发送。收件组留空用邮件服务器页的默认收件人。</p>
     </div>
 
     <div class="nw-card mb-3">
@@ -90,7 +97,7 @@ async function saveALS() {
       blind_secs: num(als.value.blind_secs, 30, 3600, 60),
       line_down_secs: num(als.value.line_down_secs, 5, 3600, 30),
       loss_pct_thresh: num(als.value.loss_pct_thresh, 1, 100, 10),
-      loss_window_min: num(als.value.loss_window_min, 1, 60, 5),
+      loss_window_min: num(als.value.loss_window_min, 1, 10, 3),
       notify_to_p0p1: parseCSV(alsP0P1Str.value),
       notify_to_p2: parseCSV(alsP2Str.value),
     }

@@ -78,7 +78,7 @@ func (a *ScreenAPI) overview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	out, err := overviewData(ctx, a.store, a.eng, a.mon, a.ind, 60)
+	out, err := overviewData(ctx, a.store, a.eng, a.mon, a.ind, nil, 60)
 	if err != nil {
 		httpError(w, 500, "db")
 		return

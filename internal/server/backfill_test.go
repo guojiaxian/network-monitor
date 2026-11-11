@@ -34,7 +34,7 @@ func TestApplyRingBackfill(t *testing.T) {
 		mkSeries("p1", "gw", "10.8.15.253", map[int64]float64{(now - 120) * 1000: 1}),      // 网关不进 pingWin
 		mkSeries("ghost", "public", "223.5.5.5", map[int64]float64{(now - 120) * 1000: 1}), // 已删探针跳过
 	}
-	n := e.applyRingBackfill(series, known, time.Unix(now-65*60, 0))
+	n := e.applyRingBackfill(series, nil, known, time.Unix(now-65*60, 0))
 	agg := e.probes["p1"]
 	if agg == nil {
 		t.Fatal("p1 聚合未创建")
@@ -46,7 +46,7 @@ func TestApplyRingBackfill(t *testing.T) {
 		t.Fatal("已删探针不应创建聚合")
 	}
 	// 分钟聚合语义与 Ingest 同源：1 分钟 2 样本全成功=绿，1 分钟 1 失败=橙（partial）
-	ms := agg.minuteStats(5) // 默认降质窗口
+	ms := agg.minuteStats() // 单分钟统计（P=L 口径）
 	if len(ms) != 2 {
 		t.Fatalf("分钟桶数：got %d，want 2", len(ms))
 	}
@@ -80,7 +80,7 @@ func TestApplyRingBackfillDedupAndPrune(t *testing.T) {
 			now.Add(-90 * time.Second).UnixMilli(): 1,
 		}),
 	}
-	n := e.applyRingBackfill(series, map[string]bool{"p1": true}, now.Add(-65*time.Minute))
+	n := e.applyRingBackfill(series, nil, map[string]bool{"p1": true}, now.Add(-65*time.Minute))
 	if len(agg.pingWin) != 3 || n != 3 {
 		t.Fatalf("去重+修剪后样本：got %d/%d，want 3/3（2 在途 + 1 去重回填）", n, len(agg.pingWin))
 	}

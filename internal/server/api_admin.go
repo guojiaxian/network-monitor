@@ -37,6 +37,7 @@ type AdminAPI struct {
 	rep      *Reporter
 	mon      *MonitorRunner
 	ind      *IndustryRunner
+	fn       *FloorNetRunner
 	tsdb     *TSDB
 	sessMu   sync.Mutex
 	sessions map[string]nwSession
@@ -55,8 +56,8 @@ type ctxKey int
 
 const ctxUserKey ctxKey = 1
 
-func NewAdminAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched, rep *Reporter, mon *MonitorRunner, ind *IndustryRunner, tsdb *TSDB, scan *ScanRunner) *AdminAPI {
-	return &AdminAPI{cfg: cfg, store: store, eng: eng, sched: sched, rep: rep, mon: mon, ind: ind, tsdb: tsdb, scan: scan,
+func NewAdminAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched, rep *Reporter, mon *MonitorRunner, ind *IndustryRunner, fn *FloorNetRunner, tsdb *TSDB, scan *ScanRunner) *AdminAPI {
+	return &AdminAPI{cfg: cfg, store: store, eng: eng, sched: sched, rep: rep, mon: mon, ind: ind, fn: fn, tsdb: tsdb, scan: scan,
 		sessions: map[string]nwSession{}, provJobs: map[string]*ProvisionJob{}}
 }
 
@@ -71,8 +72,9 @@ func (a *AdminAPI) Routes(r chi.Router) {
 		r.Put("/me/password", a.changePassword) // 修改自己密码（auditAndGuard 中放行，观察者亦可）
 
 		r.Get("/overview", a.overview)
-		r.Get("/floor-status", a.floorStatus) // 楼层状态：以楼层为单位聚合关联线路状态与最近一次 IP 扫描
-		r.Get("/monitor-doc", a.monitorDoc)   // 监测说明：探测/监测机制与周期超时实时数据（monitordoc.go 维护）
+		r.Get("/floor-status", a.floorStatus)           // 楼层状态：以楼层为单位聚合关联线路状态与最近一次 IP 扫描
+		r.Get("/monitor-doc", a.monitorDoc)             // 监测说明：探测/监测机制与周期超时实时数据（monitordoc.go 维护）
+		r.Get("/history/heartbeat", a.historyHeartbeat) // 历史页 Ping 1 分钟心跳：与线路详情同源（引擎内存环，最多 3h）
 
 		r.Get("/floors", a.listFloors)
 		r.Post("/floors", a.upsertFloor)
@@ -476,7 +478,7 @@ func trimMinStats(ms []MinStat, n int) []MinStat {
 
 // overviewData 总览数据构建（管理端与大屏共用）。mon/ind 为中心侧监测引擎（可为 nil）。
 // minutes 控制线路/楼层心跳分钟数：状态页/大屏 60，详情页 180（内存环 3h）。
-func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRunner, ind *IndustryRunner, minutes int) (map[string]any, error) {
+func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRunner, ind *IndustryRunner, fn *FloorNetRunner, minutes int) (map[string]any, error) {
 	lines, err := store.ListLines(ctx)
 	if err != nil {
 		return nil, err
@@ -508,12 +510,18 @@ func overviewData(ctx context.Context, store *Store, eng *Engine, mon *MonitorRu
 		indSnapshot = ind.Snapshot()
 	}
 
+	// 楼层网关/汇聚设备（中心 ICMP 自探）
+	floorNetSnapshot := []FloorNetStatus{}
+	if fn != nil {
+		floorNetSnapshot = fn.Snapshot()
+	}
+
 	return map[string]any{"lines": ovs, "unbound_probes": unbound,
 		"internal_monitors": monSnapshot, "industry_monitors": indSnapshot,
-		"loss_thresh": lossThreshOf(ctx, store)}, nil
+		"floor_net": floorNetSnapshot, "loss_thresh": lossThreshOf(ctx, store)}, nil
 }
 func (a *AdminAPI) overview(w http.ResponseWriter, r *http.Request) {
-	out, err := overviewData(r.Context(), a.store, a.eng, a.mon, a.ind,
+	out, err := overviewData(r.Context(), a.store, a.eng, a.mon, a.ind, a.fn,
 		minutesParam(r, 60, int(ringHistory.Minutes())))
 	if err != nil {
 		httpError(w, 500, "db")
@@ -666,10 +674,14 @@ func poolMinStats(a, b []MinStat) []MinStat {
 				p = &MinStat{T: s.T}
 				m[s.T] = p
 			}
+			// L 按样本数加权平均；P 取最大值（最差探针口径）
+			if p.N+s.N > 0 {
+				p.L = (p.L*float64(p.N) + s.L*float64(s.N)) / float64(p.N+s.N)
+			}
 			p.N += s.N
 			p.F += s.F
-			if s.M > p.M {
-				p.M = s.M
+			if s.P > p.P {
+				p.P = s.P
 			}
 		}
 	}
@@ -712,6 +724,20 @@ func (a *AdminAPI) listFloors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, fs)
 }
 
+// normalizeFloorGateway 校验楼层网关（空串=不监测；非空必须是 IPv4）。
+// 允许同一 IP 配置到多个楼层（wifi 两段、104 两段共用共同网关）。
+func normalizeFloorGateway(raw string) (string, string) {
+	ip := strings.TrimSpace(raw)
+	if ip == "" {
+		return "", ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() == nil {
+		return "", "楼层网关必须是合法 IPv4 地址（如 10.8.32.253）"
+	}
+	return parsed.To4().String(), ""
+}
+
 // normalizeFloorCIDR 校验并规范化楼层子网（空串=允许，仅展示不扫描）。
 // 扫描器只支持 IPv4 且上限 /22；非法 CIDR 会在定时扫描时反复产生失败记录。
 func normalizeFloorCIDR(raw string) (string, string) {
@@ -748,11 +774,17 @@ func (a *AdminAPI) upsertFloor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fr.CIDR = cidr
+	gateway, msg := normalizeFloorGateway(fr.Gateway)
+	if msg != "" {
+		httpError(w, 400, msg)
+		return
+	}
+	fr.Gateway = gateway
 	var id *int
 	if fr.ID != 0 {
 		id = &fr.ID
 	}
-	nid, err := a.store.UpsertFloor(r.Context(), id, fr.Name, fr.CIDR)
+	nid, err := a.store.UpsertFloor(r.Context(), id, fr.Name, fr.CIDR, fr.Gateway)
 	if err != nil {
 		if strings.Contains(err.Error(), "已存在") {
 			httpError(w, 400, err.Error())
@@ -924,7 +956,7 @@ func (a *AdminAPI) importLinesCSV(w http.ResponseWriter, r *http.Request) {
 				skipped = append(skipped, floorName+"（"+msg+"）")
 				continue
 			}
-			nid, err := a.store.UpsertFloor(r.Context(), nil, floorName, ncidr)
+			nid, err := a.store.UpsertFloor(r.Context(), nil, floorName, ncidr, "")
 			if err != nil {
 				skipped = append(skipped, floorName+"（"+err.Error()+"）")
 				continue
@@ -1076,6 +1108,12 @@ func (a *AdminAPI) getSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// 楼层网关/汇聚设备锚点未配置时回填内置默认（首次升级/新库也能在页面直接看到并编辑）
+	if _, ok := m["floor_net_monitors"]; !ok {
+		if b, err := json.Marshal(DefaultFloorNetSettings()); err == nil {
+			m["floor_net_monitors"] = b
+		}
+	}
 	// 报告模板未配置时回填内置默认（管理员打开编辑器即见全文，可直接修改保存）
 	if _, ok := m["report_templates"]; !ok {
 		t := DefaultRepTemplate()
@@ -1096,8 +1134,8 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 	allowed := map[string]bool{"agent_config": true, "smtp": true, "alert_settings": true,
 		"agent.enroll_token": true, "speed_settings": true, "report_settings": true,
 		"notify_channels": true, "snmp_settings": true,
-		"internal_monitors": true, "industry_monitors": true, "scan_settings": true,
-		"report_templates": true, "syslog_settings": true}
+		"internal_monitors": true, "industry_monitors": true, "floor_net_monitors": true,
+		"scan_settings": true, "report_templates": true, "syslog_settings": true}
 	for k, v := range body {
 		if !allowed[k] {
 			continue
@@ -1155,6 +1193,20 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 				v = nb
 			}
 		}
+		if k == "floor_net_monitors" {
+			var fn FloorNetSettings
+			if json.Unmarshal(v, &fn) != nil {
+				httpError(w, 400, "floor_net_monitors 格式错误")
+				return
+			}
+			if err := ValidateFloorNetSettings(&fn); err != nil {
+				httpError(w, 400, err.Error())
+				return
+			}
+			if nb, err := json.Marshal(fn); err == nil {
+				v = nb
+			}
+		}
 		if k == "scan_settings" {
 			var ss ScanSettings
 			if json.Unmarshal(v, &ss) != nil {
@@ -1192,8 +1244,8 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 			if als.LossPctThresh <= 0 || als.LossPctThresh > 100 {
 				als.LossPctThresh = 10
 			}
-			if als.LossWindowMin < 1 || als.LossWindowMin > 60 {
-				als.LossWindowMin = 5
+			if als.LossWindowMin < 1 || als.LossWindowMin > 10 {
+				als.LossWindowMin = 3
 			}
 			if als.EvalIntervalS < 2 || als.EvalIntervalS > 60 {
 				als.EvalIntervalS = 5
@@ -1286,10 +1338,10 @@ func (a *AdminAPI) putSettings(w http.ResponseWriter, r *http.Request) {
 				httpError(w, 400, "月报生成日期需在 1~28 之间")
 				return
 			}
-			for _, t := range []string{rs.DailyAt, rs.WeeklyAt, rs.MonthlyAt} {
+			for _, t := range []string{rs.DailyAt, rs.WeeklyAt, rs.MonthlyAt, rs.DailySendAt, rs.WeeklySendAt, rs.MonthlySendAt} {
 				if strings.TrimSpace(t) != "" {
 					if _, err := time.Parse("15:04", strings.TrimSpace(t)); err != nil {
-						httpError(w, 400, "报表时间格式应为 HH:MM（如 08:00）")
+						httpError(w, 400, "报表生成/发送时间格式应为 HH:MM（如 08:00）")
 						return
 					}
 				}
@@ -1762,13 +1814,14 @@ func (a *AdminAPI) genReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"id": id})
 }
 
+// listAudit GET /api/admin/audit?limit=&offset=：审计日志（服务端分页 {total, rows}）
 func (a *AdminAPI) listAudit(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.store.ListAudit(r.Context(), atoi(r.URL.Query().Get("limit")))
+	rows, total, err := a.store.ListAudit(r.Context(), atoi(r.URL.Query().Get("limit")), atoi(r.URL.Query().Get("offset")))
 	if err != nil {
 		httpError(w, 500, "db")
 		return
 	}
-	writeJSON(w, rows)
+	writeJSON(w, map[string]any{"total": total, "rows": rows})
 }
 
 // ---------- 探针版本发布与升级 ----------
@@ -2087,6 +2140,9 @@ type HistoryRecord struct {
 	UpMbps float64 `json:"up_mbps"`   // speed 上传速率 Mbps
 	Code   float64 `json:"code"`      // http 状态码
 	Cert   float64 `json:"cert_days"` // http 证书剩余天数
+	// LossPct：ping 轮丢包率 %（方案C：探针一轮 5 包；旧数据=0/100）。
+	// 探测历史桶 PL 用它计算，与心跳紫格、P2 告警同口径。
+	LossPct float64 `json:"loss_pct,omitempty"`
 }
 
 // HistoryStats 查询窗口全量统计（status 过滤前口径）
@@ -2104,7 +2160,7 @@ type HistoryBucket struct {
 	OKN    int     `json:"ok_n"`       // 成功次数
 	AvgRTT float64 `json:"avg_rtt_ms"` // 平均时延/速率
 	// PN/PL：ping 样本数与桶内"按目标丢包率下中位数"（%，lossMedian 同 helper）——
-	// 降级黄格判定与 P2 告警同口径；type=all 桶仅统计 ping 部分。样本不足时 PL 不产出。
+	// 降级紫格判定与 P2 告警同口径；type=all 桶仅统计 ping 部分。样本不足时 PL 不产出。
 	PN int     `json:"pn,omitempty"`
 	PL float64 `json:"pl,omitempty"`
 }
@@ -2122,14 +2178,14 @@ func nameKey(m map[string]string) string {
 }
 
 var histTypes = map[string]bool{"ping": true, "tcp": true, "dns": true, "http": true,
-	"monitor": true, "industry": true, "speed": true, "all": true}
+	"monitor": true, "industry": true, "floornet": true, "speed": true, "all": true}
 
 // histMetric 探测类型 → VM 指标族（ok 主序列 / 关联值序列 / 附加序列）。
 // speed：ok 序列值即下载速率（无独立 rtt 序列）。
 func histMetric(typ string) (okMetric, rttMetric string, extras []string) {
 	switch typ {
 	case "ping":
-		return "nw_ping_ok", "nw_ping_rtt_ms", nil
+		return "nw_ping_ok", "nw_ping_rtt_ms", []string{"nw_ping_loss_pct"}
 	case "tcp":
 		return "nw_tcp_ok", "nw_tcp_rtt_ms", nil
 	case "dns":
@@ -2140,6 +2196,8 @@ func histMetric(typ string) (okMetric, rttMetric string, extras []string) {
 		return "nw_monitor_ok", "nw_monitor_rtt_ms", nil
 	case "industry":
 		return "nw_industry_ok", "nw_industry_rtt_ms", nil
+	case "floornet":
+		return floorNetMetricOK, floorNetMetricRTT, nil
 	case "speed":
 		return "nw_speed_down_mbps", "", []string{"nw_speed_up_mbps"}
 	}
@@ -2154,6 +2212,9 @@ func histSelAll(typ, probe string) string {
 	if typ == "industry" {
 		return `{industry!=""}`
 	}
+	if typ == "floornet" {
+		return `{class!=""}`
+	}
 	return `{probe="` + probe + `"}`
 }
 
@@ -2166,6 +2227,9 @@ func histSelOne(typ, probe, target string) string {
 	}
 	if typ == "industry" {
 		return `{industry="` + t + `"}`
+	}
+	if typ == "floornet" {
+		return `{target="` + t + `"}`
 	}
 	return `{probe="` + probe + `",target="` + t + `"}`
 }
@@ -2251,6 +2315,9 @@ func (a *AdminAPI) histFamily(ctx context.Context, typ string, probes []string, 
 				rec.Code = joinAt["nw_http_code"][key]
 				rec.Cert = joinAt["nw_http_cert_days"][key]
 			}
+			if typ == "ping" {
+				rec.LossPct = joinAt["nw_ping_loss_pct"][key]
+			}
 			records = append(records, rec)
 		}
 	}
@@ -2319,6 +2386,13 @@ func (a *AdminAPI) histExpectedIntv(ctx context.Context, typ string) int64 {
 			}
 		}
 		return 60
+	case "floornet":
+		var fn FloorNetSettings
+		if a.store.GetSetting(ctx, "floor_net_monitors", &fn) == nil {
+			fn.normalize()
+			return int64(fn.IntervalS)
+		}
+		return 10
 	case "speed":
 		var c struct {
 			IntervalMin int `json:"interval_min"`
@@ -2333,7 +2407,7 @@ func (a *AdminAPI) histExpectedIntv(ctx context.Context, typ string) int64 {
 
 // histBucketize 把一组记录聚合到固定时间桶（跨度/桶数由调用方定，含网格对齐钳位）。
 // includeSpeedRTT：speed 下载速率计入均值通道（图表纵轴=Mbps）。
-// withLoss：聚合 ping 记录的按目标丢包计数并计算桶内下中位数 PL（降级黄格判定，
+// withLoss：聚合 ping 记录的按目标丢包统计并计算桶内下中位数 PL（降级紫格判定，
 // 与 P2 告警 medianLoss 同 helper 同口径；系列折线不需要，传 false 省 payload）。
 func histBucketize(recs []HistoryRecord, start, span int64, n int, includeSpeedRTT bool, withLoss bool) []HistoryBucket {
 	buckets := make([]HistoryBucket, n)
@@ -2342,9 +2416,9 @@ func histBucketize(recs []HistoryRecord, start, span int64, n int, includeSpeedR
 	}
 	rttSum := make([]float64, n)
 	rttN := make([]int, n)
-	var bucketTargets map[int]map[string][2]int // 桶 → 目标 → [总数, 失败数]（ping，PL 计算用）
+	var bucketTargets map[int]map[string]lossAgg // 桶 → 目标 → 轮次/丢包率之和（ping，PL 计算用）
 	if withLoss {
-		bucketTargets = map[int]map[string][2]int{}
+		bucketTargets = map[int]map[string]lossAgg{}
 	}
 	for _, rc := range recs {
 		idx := int((rc.TS/1000 - start) / span)
@@ -2367,14 +2441,16 @@ func histBucketize(recs []HistoryRecord, start, span int64, n int, includeSpeedR
 			b.PN++
 			pt := bucketTargets[idx]
 			if pt == nil {
-				pt = map[string][2]int{}
+				pt = map[string]lossAgg{}
 				bucketTargets[idx] = pt
 			}
-			p := pt[rc.Target]
-			p[0]++
-			if !rc.OK {
-				p[1]++
+			loss := rc.LossPct
+			if !rc.OK && loss <= 0 {
+				loss = 100 // 旧数据无 loss_pct 序列时按失败=100% 兜底
 			}
+			p := pt[rc.Target]
+			p.n++
+			p.lost += loss
 			pt[rc.Target] = p
 		}
 	}
@@ -2439,7 +2515,7 @@ type histSeries struct {
 	Buckets []HistoryBucket `json:"buckets"`
 }
 
-var histTypeOrder = map[string]int{"ping": 0, "tcp": 1, "dns": 2, "http": 3, "monitor": 4, "industry": 5, "speed": 6}
+var histTypeOrder = map[string]int{"ping": 0, "tcp": 1, "dns": 2, "http": 3, "monitor": 4, "industry": 5, "floornet": 6, "speed": 7}
 
 // histSeriesBuckets 同跨度按 (type,probe,target) 分组聚合，系列按类型顺序+探针+目标名稳定排序
 // （同名 target 不混线：如 223.5.5.5 的 ping 与 dns、多探针的定时测速对比）。
@@ -2504,6 +2580,42 @@ func histFilterStatus(recs []HistoryRecord, status string) []HistoryRecord {
 	return recs
 }
 
+// historyHeartbeat 探测历史 Ping 页签的 1 分钟心跳：GET /api/admin/history/heartbeat?probe=&minutes=
+// 直接读引擎内存环的 MinStat（与线路详情同源同口径），最多 180 分钟；
+// 历史页默认 24h 时仅覆盖最近 3h，更早区间仍由 VM 分桶趋势承担。
+func (a *AdminAPI) historyHeartbeat(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	probeID := q.Get("probe")
+	minutes := 180
+	if v, err := strconv.Atoi(q.Get("minutes")); err == nil {
+		minutes = v
+	}
+	if minutes < 1 {
+		minutes = 1
+	}
+	maxMin := int(ringHistory.Minutes())
+	if minutes > maxMin {
+		minutes = maxMin
+	}
+	snap := a.eng.Snapshot()
+	var out []MinStat
+	if probeID != "" {
+		if st, ok := snap[probeID]; ok {
+			out = trimMinStats(st.Minutes, minutes)
+		}
+	} else {
+		for _, st := range snap {
+			out = poolMinStats(out, trimMinStats(st.Minutes, minutes))
+		}
+	}
+	writeJSON(w, map[string]any{
+		"minutes":      out,
+		"loss_thresh":  lossThreshOf(r.Context(), a.store),
+		"span":         60,
+		"generated_at": time.Now().Format(time.RFC3339),
+	})
+}
+
 // history 探测历史查询：GET /api/admin/history?type=&probe=&targets=(&n 分隔多选)&status=&start=&end=&limit=&offset=&by_target=
 // type: all/ping/tcp/dns/http/monitor/industry/speed。服务端分页（offset/limit），
 // 返回当页 records + 全窗口统计 stats + 趋势分桶 buckets——前端渲染量恒定；
@@ -2565,7 +2677,7 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 		probes = []string{probe}
 	}
 	if !histTypes[typ] {
-		httpError(w, 400, "type 必须为 all/ping/tcp/dns/http/monitor/industry/speed")
+		httpError(w, 400, "type 必须为 all/ping/tcp/dns/http/monitor/industry/floornet/speed")
 		return
 	}
 
@@ -2574,7 +2686,7 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 
 	fams := []string{typ}
 	if typ == "all" {
-		fams = []string{"ping", "tcp", "dns", "http", "monitor", "industry", "speed"}
+		fams = []string{"ping", "tcp", "dns", "http", "monitor", "industry", "floornet", "speed"}
 	}
 	var records []HistoryRecord
 	tgtSet := map[string]bool{}
@@ -2662,7 +2774,8 @@ func (a *AdminAPI) history(w http.ResponseWriter, r *http.Request) {
 // GET /api/admin/history/labels?metric=nw_ping_ok&label=target&probe=<探针ID>
 // 解决"目标下拉依赖查询响应回填、选中后只剩一个目标"的鸡生蛋问题。
 var histLabelMetrics = map[string]bool{"nw_ping_ok": true, "nw_tcp_ok": true, "nw_dns_ok": true,
-	"nw_http_ok": true, "nw_monitor_ok": true, "nw_industry_ok": true, "nw_speed_down_mbps": true}
+	"nw_http_ok": true, "nw_monitor_ok": true, "nw_industry_ok": true,
+	"nw_floor_net_ok": true, "nw_speed_down_mbps": true}
 var histLabelNames = map[string]bool{"target": true, "monitor": true, "industry": true}
 
 func (a *AdminAPI) historyLabels(w http.ResponseWriter, r *http.Request) {

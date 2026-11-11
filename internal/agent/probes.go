@@ -18,6 +18,10 @@ import (
 // probeRetryPause 重试前短暂等待（给瞬时拥塞/丢包恢复留出间隔）。
 const probeRetryPause = 300 * time.Millisecond
 
+// PingBurstCount 公网 ICMP 每轮发包数（方案C）：一轮 5 包聚合为一条带丢包率的样本。
+// 网关探测仍单包（网关只用于楼层中断判定，不需要丢包率精度）。
+const PingBurstCount = 5
+
 // probeRetry 探测重试包装：失败后短暂等待重试，任一次成功即成功（返回成功那次的值），
 // 连续失败才判断连（返回最后一次错误）——偶发丢包/瞬时抖动不产生失败样本。
 // 重试次数与等待间隔来自下发的探测配置（agent_config.retry_n / retry_pause_ms，
@@ -54,6 +58,61 @@ func pingOnce(ctx context.Context, target, sourceIP string, timeout time.Duratio
 		return 0, false, fmt.Errorf("icmp timeout")
 	}
 	return float64(st.AvgRtt.Microseconds()) / 1000.0, true, nil
+}
+
+// pingBurst 对一个目标并发发 count 个单包 ICMP，聚合为本轮结果：
+// OK=至少收到 1 包，LossPct=丢包比例（%），RTT=成功包平均时延。
+// 本轮不做逐包重试——重试会把真实丢包掩盖成"重试后失败率"。
+func pingBurst(ctx context.Context, target, sourceIP string, timeout time.Duration, count int) (rttMs float64, ok bool, lossPct float64, err error) {
+	if count <= 0 {
+		count = PingBurstCount
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		return 0, false, 100, cerr
+	}
+	type pingResult struct {
+		rtt float64
+		ok  bool
+		err error
+	}
+	ch := make(chan pingResult, count)
+	for i := 0; i < count; i++ {
+		go func() {
+			r, o, e := pingOnce(ctx, target, sourceIP, timeout)
+			ch <- pingResult{r, o, e}
+		}()
+	}
+	recv := 0
+	var sum float64
+	var firstErr error
+	for i := 0; i < count; i++ {
+		r := <-ch
+		if r.ok {
+			recv++
+			sum += r.rtt
+		} else if firstErr == nil {
+			firstErr = r.err
+		}
+	}
+	lossPct = burstLossPct(count, recv)
+	if recv == 0 {
+		return 0, false, lossPct, firstErr
+	}
+	return sum / float64(recv), true, lossPct, nil
+}
+
+// burstLossPct 一轮 sent 包中 recv 包成功时的丢包率（%）。
+func burstLossPct(sent, recv int) float64 {
+	if sent <= 0 {
+		return 100
+	}
+	if recv < 0 {
+		recv = 0
+	}
+	if recv > sent {
+		recv = sent
+	}
+	return float64(sent-recv) * 100 / float64(sent)
 }
 
 // tcpOnce TCP 连通性探测，target 为 host:port。

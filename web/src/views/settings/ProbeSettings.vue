@@ -119,6 +119,43 @@
       <div v-if="indMsg" class="small mt-2" :class="indOk ? 'text-success' : 'text-danger'">{{ indMsg }}</div>
     </div>
 
+    <!-- 楼层网关与汇聚设备：网关在楼层配置页逐楼层填写，这里管理共享汇聚/AC/104 汇聚锚点 -->
+    <div class="nw-card mb-3">
+      <h6>楼层网关与汇聚设备监测（中心 → 楼层 · 仅 ICMP）</h6>
+      <div class="d-flex align-items-center mb-2 flex-wrap gap-2">
+        <p class="text-secondary small mb-0">
+          核心 SVI 网关在「楼层配置」逐楼层填写；这里配置汇聚交换机、wifi AC、104 汇聚等共享锚点。
+          相同 IP 只探测一次，连续 <b>{{ fn.fail_n }}</b> 次失败报 P1，恢复自动解除。
+        </p>
+        <div class="form-check ms-auto me-3">
+          <input id="fn1" v-model="fn.enabled" type="checkbox" class="form-check-input" />
+          <label for="fn1" class="form-check-label">启用</label>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" @click="openFN()">＋ 新增锚点</button>
+        <button class="btn btn-sm btn-primary" @click="saveFN">保存</button>
+      </div>
+      <div class="row g-2 mb-3">
+        <div class="col-md-3"><label class="form-label small mb-1">探测周期(秒)</label>
+          <input v-model.number="fn.interval_s" type="number" min="5" max="3600" class="form-control form-control-sm" /><div class="text-help">5 ~ 3600，默认 10</div></div>
+        <div class="col-md-3"><label class="form-label small mb-1">单次超时(秒)</label>
+          <input v-model.number="fn.timeout_s" type="number" min="1" max="10" class="form-control form-control-sm" /><div class="text-help">1 ~ 10，默认 1</div></div>
+        <div class="col-md-3"><label class="form-label small mb-1">连续失败次数</label>
+          <input v-model.number="fn.fail_n" type="number" min="1" max="10" class="form-control form-control-sm" /><div class="text-help">1 ~ 10，默认 3</div></div>
+      </div>
+      <table class="table nw-table table-sm align-middle" v-if="(fn.anchors || []).length">
+        <thead><tr><th>名称</th><th>管理 IP</th><th>覆盖楼层段</th><th style="width:100px">类型</th><th style="width:80px"></th></tr></thead>
+        <tbody>
+          <tr v-for="(it, i) in fn.anchors" :key="i">
+            <td>{{ it.name }}</td><td><code>{{ it.target }}</code></td><td>{{ it.floors || '—' }}</td>
+            <td><span class="badge bg-secondary">{{ fnTypeLabel(it.type) }}</span></td>
+            <td><a href="javascript:void(0)" class="text-primary text-decoration-none me-2" @click="openFN(it, i)">编辑</a><a href="javascript:void(0)" class="text-danger text-decoration-none" @click="fn.anchors.splice(i, 1)">删除</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="text-secondary small mb-2">暂无汇聚设备锚点；请在「楼层配置」填写网关，或在此新增汇聚设备。</p>
+      <div v-if="fnMsg" class="small mt-2" :class="fnOk ? 'text-success' : 'text-danger'">{{ fnMsg }}</div>
+    </div>
+
     <div class="nw-card mb-3">
       <h6>中心引擎参数（告警判定节奏）</h6>
       <div class="row g-2 align-items-end">
@@ -252,6 +289,25 @@
       </div>
       <div v-if="indModal.err" class="text-danger small mt-2">{{ indModal.err }}</div>
     </ModalBox>
+
+    <!-- 新增楼层汇聚/AC/104 汇聚锚点 -->
+    <ModalBox :show="fnModal.show" :title="fnModal.idx >= 0 ? '编辑楼层汇聚设备' : '新增楼层汇聚设备（仅 ICMP）'" @close="fnModal.show = false" @ok="confirmFN">
+      <div class="row g-2">
+        <div class="col-md-6"><label class="form-label small mb-1">名称 <span class="text-danger">*</span></label>
+          <input v-model="fnModal.name" class="form-control form-control-sm" placeholder="如 2L汇聚交换机" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">管理 IP <span class="text-danger">*</span></label>
+          <input v-model="fnModal.target" class="form-control form-control-sm font-monospace" placeholder="10.8.37.1" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">覆盖楼层段</label>
+          <input v-model="fnModal.floors" class="form-control form-control-sm" placeholder="如 1-3楼 / 8楼-1、8楼-2" /></div>
+        <div class="col-md-6"><label class="form-label small mb-1">设备类型</label>
+          <select v-model="fnModal.type" class="form-select form-select-sm">
+            <option value="switch">汇聚/接入交换机</option>
+            <option value="ac">wifi AC</option>
+            <option value="aggregation">104号院汇聚</option>
+          </select></div>
+      </div>
+      <div v-if="fnModal.err" class="text-danger small mt-2">{{ fnModal.err }}</div>
+    </ModalBox>
   </div>
 </template>
 
@@ -281,6 +337,7 @@ const ac = ref({ icmp_targets: [], tcp_targets: [], dns_servers: [], http_target
 const enrollToken = ref(''), acMsg = ref(''), acOk = ref(false), acMsg2 = ref(''), acOk2 = ref(false)
 const im = ref({ enabled: false, items: [] }), imMsg = ref(''), imOk = ref(false)
 const ind = ref({ enabled: false, items: [] }), indMsg = ref(''), indOk = ref(false)
+const fn = ref({ enabled: true, interval_s: 10, timeout_s: 1, fail_n: 3, anchors: [] }), fnMsg = ref(''), fnOk = ref(false)
 // 中心引擎参数（alert_settings 的周期类字段；保存时展开携带其余字段防覆盖）
 const als = ref({ eval_interval_s: 5, type_fail_window_s: 60 }), engMsg = ref(''), engOk = ref(false)
 // IP 扫描计划：中心定时逐网段扫描（结果用于线路"在线 IP 设备数"）
@@ -293,6 +350,7 @@ const scanFloors = ref([]), scanLast = ref('')
 const tModal = reactive({ show: false, title: '', placeholder: '', arr: null, val: '', err: '', editIdx: -1 })
 const imModal = reactive({ show: false, name: '', type: 'http', target: '', interval_s: 30, timeout_s: 5, err: '', idx: -1 })
 const indModal = reactive({ show: false, name: '', target: '', interval_s: 30, timeout_s: 5, err: '', idx: -1 })
+const fnModal = reactive({ show: false, name: '', target: '', floors: '', type: 'switch', err: '', idx: -1 })
 
 async function load() {
   const s = await api.get('/api/admin/settings')
@@ -304,6 +362,8 @@ async function load() {
   if (!Array.isArray(im.value.items)) im.value.items = []
   ind.value = s.industry_monitors || {}
   if (!Array.isArray(ind.value.items)) ind.value.items = []
+  fn.value = { ...fn.value, ...(s.floor_net_monitors || {}) }
+  if (!Array.isArray(fn.value.anchors)) fn.value.anchors = []
   als.value = { ...als.value, ...(s.alert_settings || {}) }
   scan.value = { ...scan.value, ...(s.scan_settings || {}) }
   if (!Array.isArray(scan.value.floor_ids)) scan.value.floor_ids = []
@@ -471,6 +531,43 @@ async function saveInd() {
     await api.put('/api/admin/settings', { industry_monitors: { enabled: ind.value.enabled, items } })
     indMsg.value = `已保存 ${items.length} 个目标，30 秒内生效（仅 ICMP ping）`; indOk.value = true
   } catch (e) { indMsg.value = e.message }
+}
+
+function fnTypeLabel(t) {
+  return { switch: '汇聚交换机', ac: 'wifi AC', aggregation: '104号院汇聚' }[t] || '汇聚交换机'
+}
+function openFN(it, idx) {
+  Object.assign(fnModal, it
+    ? { show: true, name: it.name, target: it.target, floors: it.floors || '', type: it.type || 'switch', err: '', idx }
+    : { show: true, name: '', target: '', floors: '', type: 'switch', err: '', idx: -1 })
+}
+function confirmFN() {
+  fnModal.err = ''
+  const name = fnModal.name.trim(), target = fnModal.target.trim()
+  if (!name) { fnModal.err = '请填写名称'; return }
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(target)) { fnModal.err = '请填写合法的 IPv4 地址'; return }
+  const dup = (fn.value.anchors || []).some((x, i) => i !== fnModal.idx && x.target === target)
+  if (dup) { fnModal.err = '该 IP 已存在'; return }
+  const item = { name, target, floors: fnModal.floors.trim(), type: fnModal.type }
+  if (fnModal.idx >= 0) fn.value.anchors.splice(fnModal.idx, 1, item)
+  else fn.value.anchors.push(item)
+  fnModal.show = false
+}
+async function saveFN() {
+  fnMsg.value = ''; fnOk.value = false
+  try {
+    const anchors = (fn.value.anchors || []).filter(x => x.name && x.target)
+    await api.put('/api/admin/settings', {
+      floor_net_monitors: {
+        enabled: !!fn.value.enabled,
+        interval_s: num(fn.value.interval_s, 5, 3600, 10),
+        timeout_s: num(fn.value.timeout_s, 1, 10, 1),
+        fail_n: num(fn.value.fail_n, 1, 10, 3),
+        anchors,
+      },
+    })
+    fnMsg.value = `已保存 ${anchors.length} 个汇聚设备锚点，30 秒内生效（网关请到楼层配置填写）`; fnOk.value = true
+  } catch (e) { fnMsg.value = e.message }
 }
 
 onMounted(load)

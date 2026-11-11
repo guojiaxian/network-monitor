@@ -55,16 +55,16 @@ func docRow(d map[string]any, groupTitle, rowName string) map[string]any {
 // TestMonitorDocDefaults 全部设置缺省：显示默认值且状态正确（零值回退兜底）。
 func TestMonitorDocDefaults(t *testing.T) {
 	d := docMap(t, monitorDocData(fakeGetter(map[string]any{}, errors.New("no pg"))))
-	if row := docRow(d, "一、自动探测 / 监测项 · 楼层探针", "网关探测（区分楼层 / 线路故障域）"); row == nil || row["period"] != "10s ±10%" || row["timeout"] != "3s" {
+	if row := docRow(d, "一、楼层探针", "网关探测（区分楼层 / 线路故障域）"); row == nil || row["period"] != "10s ±10%" || row["timeout"] != "3s" {
 		t.Fatalf("网关探测默认周期/超时错误: %+v", row)
 	}
-	if row := docRow(d, "二、自动探测 / 监测项 · 探针 → 中心上报", "心跳 + 探针资源（CPU / 内存 / 磁盘）"); row == nil || row["period"] != "15s" {
+	if row := docRow(d, "二、探针 → 中心上报", "心跳 + 探针资源（CPU / 内存 / 磁盘）"); row == nil || row["period"] != "15s" {
 		t.Fatalf("心跳默认周期应为 15s: %+v", row)
 	}
-	if row := docRow(d, "一、自动探测 / 监测项 · 楼层探针", "探测重试（每轮失败后）"); row == nil || row["period"] != "重试 1 次" || row["timeout"] != "间隔 300ms" {
+	if row := docRow(d, "一、楼层探针", "探测重试（每轮失败后）"); row == nil || row["period"] != "重试 1 次" || row["timeout"] != "间隔 300ms" {
 		t.Fatalf("重试默认值错误: %+v", row)
 	}
-	if row := docRow(d, "三、自动探测 / 监测项 · 中心服务器", "告警评估（对全部探测数据判定，见下表）"); row == nil || row["period"] != "5s" {
+	if row := docRow(d, "三、中心服务器", "告警评估"); row == nil || row["period"] != "5s" {
 		t.Fatalf("告警评估默认周期应为 5s: %+v", row)
 	}
 	// 告警表实时值：探测异常窗口默认 60s → "1 分钟"
@@ -83,6 +83,42 @@ func TestMonitorDocDefaults(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("告警表缺少探测异常行")
+	}
+}
+
+// TestMonitorDocHeartbeatColors 心跳格颜色必须带色块与判定，且与方案C实现一致。
+func TestMonitorDocHeartbeatColors(t *testing.T) {
+	d := docMap(t, monitorDocData(fakeGetter(map[string]any{}, errors.New("no pg"))))
+	hb, ok := d["heartbeat"].(map[string]any)
+	if !ok {
+		t.Fatal("缺少 heartbeat 说明")
+	}
+	if cell, _ := hb["cell"].(string); !strings.Contains(cell, "1 格 = 1 分钟") {
+		t.Fatalf("心跳粒度应写明 1 格 = 1 分钟: %v", hb["cell"])
+	}
+	if win, _ := hb["windows"].(string); !strings.Contains(win, "3 小时") {
+		t.Fatalf("详情页窗口应写明 3 小时: %v", hb["windows"])
+	}
+	if note, _ := hb["note"].(string); !strings.Contains(note, "单分钟实际降质") {
+		t.Fatalf("公共注记应说明格子只反映单分钟实际降质: %v", hb["note"])
+	}
+	colors, _ := hb["colors"].([]any)
+	if len(colors) != 5 {
+		t.Fatalf("颜色图例应有 5 项: %+v", colors)
+	}
+	want := map[string]string{"绿": "无丢包", "橙": "阈值", "紫": "10%", "红": "5 包", "灰": "无样本"}
+	for _, c := range colors {
+		cm := c.(map[string]any)
+		name, _ := cm["name"].(string)
+		rule, _ := cm["rule"].(string)
+		color, _ := cm["color"].(string)
+		if !strings.HasPrefix(color, "#") || len(color) != 7 {
+			t.Fatalf("%s 色块缺少合法色值: %+v", name, cm)
+		}
+		w, ok := want[name]
+		if !ok || !strings.Contains(rule, w) {
+			t.Fatalf("%s 判定不符（期望含 %q）: %s", name, w, rule)
+		}
 	}
 }
 
@@ -106,7 +142,7 @@ func TestMonitorDocLiveValues(t *testing.T) {
 		"syslog_settings":   map[string]any{"enabled": true, "host": "1.2.3.4", "proto": "tcp", "timeout_s": 7},
 		"report_settings":   map[string]any{"daily_enabled": true, "daily_at": "07:30", "weekly_enabled": true, "weekly_day": 2, "weekly_at": "08:45"},
 	}, errors.New("no pg"))))
-	g1 := "一、自动探测 / 监测项 · 楼层探针"
+	g1 := "一、楼层探针"
 	if row := docRow(d, g1, "网关探测（区分楼层 / 线路故障域）"); row == nil || row["period"] != "7s ±10%" || row["timeout"] != "4s" {
 		t.Fatalf("网关探测实时周期错误: %+v", row)
 	}
@@ -116,21 +152,21 @@ func TestMonitorDocLiveValues(t *testing.T) {
 	if row := docRow(d, g1, "探测重试（每轮失败后）"); row == nil || row["period"] != "重试 2 次" || row["timeout"] != "间隔 500ms" {
 		t.Fatalf("重试实时值错误: %+v", row)
 	}
-	if row := docRow(d, "二、自动探测 / 监测项 · 探针 → 中心上报", "心跳 + 探针资源（CPU / 内存 / 磁盘）"); row == nil || row["period"] != "20s" {
+	if row := docRow(d, "二、探针 → 中心上报", "心跳 + 探针资源（CPU / 内存 / 磁盘）"); row == nil || row["period"] != "20s" {
 		t.Fatalf("心跳实时周期应为 20s: %+v", row)
 	}
-	if row := docRow(d, "二、自动探测 / 监测项 · 探针 → 中心上报", "出口 IP / 运营商 / 归属地识别"); row == nil || row["period"] != "9min" {
+	if row := docRow(d, "二、探针 → 中心上报", "出口 IP / 运营商 / 归属地识别"); row == nil || row["period"] != "9min" {
 		t.Fatalf("出口识别实时周期应为 9min: %+v", row)
 	}
-	speedRow := docRow(d, "二、自动探测 / 监测项 · 探针 → 中心上报", "定时测速（http 引擎，全部探针并行）")
+	speedRow := docRow(d, "二、探针 → 中心上报", "定时测速（http 引擎，同时最多 12 条并行）")
 	if speedRow == nil || speedRow["status"] != "off" || speedRow["period"] != "30min" {
 		t.Fatalf("测速行状态/周期错误: %+v", speedRow)
 	}
-	scanRow := docRow(d, "三、自动探测 / 监测项 · 中心服务器", "楼层 IP 扫描（逐 IP ping 单包，并发 64〔内置固定〕）")
+	scanRow := docRow(d, "三、中心服务器", "楼层 IP 扫描")
 	if scanRow == nil || scanRow["period"] != "15min" || scanRow["timeout"] != "2500ms/IP" {
 		t.Fatalf("扫描行实时值错误: %+v", scanRow)
 	}
-	monRow := docRow(d, "三、自动探测 / 监测项 · 中心服务器", "内→内服务监控（中心自探，Uptime Kuma 模式）")
+	monRow := docRow(d, "三、中心服务器", "内→内服务监控（中心自探）")
 	if monRow == nil || monRow["status"] != "on" {
 		t.Fatalf("内→内行应 on: %+v", monRow)
 	}
@@ -142,15 +178,15 @@ func TestMonitorDocLiveValues(t *testing.T) {
 	if it["period"] != "20s" || it["timeout"] != "8s" {
 		t.Fatalf("监控项实时间隔/超时错误: %+v", it)
 	}
-	indRow := docRow(d, "三、自动探测 / 监测项 · 中心服务器", "行业网监测（仅 ICMP，不做其他探测以免被封）")
+	indRow := docRow(d, "三、中心服务器", "行业网监测（仅 ICMP）")
 	if indRow == nil || indRow["status"] != "on" {
 		t.Fatalf("行业网行应 on: %+v", indRow)
 	}
-	snmpRow := docRow(d, "三、自动探测 / 监测项 · 中心服务器", "SNMP 真实流量采集（防火墙 WAN 口）")
+	snmpRow := docRow(d, "三、中心服务器", "SNMP 流量采集（防火墙 WAN 口）")
 	if snmpRow == nil || snmpRow["period"] != "60s" || snmpRow["timeout"] != "9s" {
 		t.Fatalf("SNMP 行实时值错误: %+v", snmpRow)
 	}
-	repRow := docRow(d, "三、自动探测 / 监测项 · 中心服务器", "日报 / 周报 / 月报（自动生成并邮件推送）")
+	repRow := docRow(d, "三、中心服务器", "日报 / 周报 / 月报")
 	if repRow == nil || !strings.Contains(repRow["period"].(string), "07:30") || !strings.Contains(repRow["period"].(string), "周二") {
 		t.Fatalf("报表实时文案错误: %+v", repRow)
 	}
@@ -171,12 +207,12 @@ func TestMonitorDocHeartbeatClamp(t *testing.T) {
 	d := docMap(t, monitorDocData(fakeGetter(map[string]any{
 		"agent_config": map[string]any{"heartbeat_sec": 999},
 	}, errors.New("no pg"))))
-	if row := docRow(d, "二、自动探测 / 监测项 · 探针 → 中心上报", "心跳 + 探针资源（CPU / 内存 / 磁盘）"); row == nil || row["period"] != "15s" {
+	if row := docRow(d, "二、探针 → 中心上报", "心跳 + 探针资源（CPU / 内存 / 磁盘）"); row == nil || row["period"] != "15s" {
 		t.Fatalf("心跳越界应回退 15s: %+v", row)
 	}
 }
 
-// TestMonitorDocSummarySync 配置速览与告警表同步：当前周期/目标/45s 判活/冲突行都要在。
+// TestMonitorDocSummarySync 关键口径同步：目标/周期/45s 判活/降质阈值/冲突行都要在。
 func TestMonitorDocSummarySync(t *testing.T) {
 	d := docMap(t, monitorDocData(fakeGetter(map[string]any{
 		"agent_config": map[string]any{
@@ -194,24 +230,31 @@ func TestMonitorDocSummarySync(t *testing.T) {
 		},
 	}, errors.New("no pg"))))
 
-	row := docRow(d, "当前生效配置速览", "探测周期与目标")
+	row := docRow(d, "一、楼层探针", "公网 ICMP（当前 2 目标投票）")
 	if row == nil {
-		t.Fatal("缺少配置速览·探测周期与目标")
+		t.Fatal("缺少公网 ICMP 行")
 	}
-	for _, want := range []string{"ICMP 10s", "TCP 20s", "DNS 30s", "HTTP 60s"} {
-		if !strings.Contains(row["period"].(string), want) {
-			t.Fatalf("速览周期缺少 %s: %s", want, row["period"])
-		}
-	}
-	for _, want := range []string{"223.5.5.5", "119.29.29.29", "www.baidu.com"} {
+	for _, want := range []string{"223.5.5.5", "119.29.29.29"} {
 		if !strings.Contains(row["desc"].(string), want) {
-			t.Fatalf("速览目标缺少 %s: %s", want, row["desc"])
+			t.Fatalf("ICMP 目标缺少 %s: %s", want, row["desc"])
 		}
 	}
-	if row = docRow(d, "当前生效配置速览", "告警判定"); row == nil || !strings.Contains(row["desc"].(string), "45s") {
-		t.Fatalf("速览应写清线路中断 45s: %+v", row)
+	if !strings.Contains(row["period"].(string), "10s") {
+		t.Fatalf("ICMP 周期应实时为 10s: %s", row["period"])
 	}
-	var down, conflict bool
+	hb := d["heartbeat"].(map[string]any)
+	colors := hb["colors"].([]any)
+	var purple string
+	for _, c := range colors {
+		cm := c.(map[string]any)
+		if cm["name"] == "紫" {
+			purple, _ = cm["rule"].(string)
+		}
+	}
+	if !strings.Contains(purple, "10%") || !strings.Contains(purple, "该分钟") {
+		t.Fatalf("紫格口径应实时为单分钟/10%%: %s", purple)
+	}
+	var down, conflict, severe bool
 	for _, a := range d["alerts"].([]any) {
 		am := a.(map[string]any)
 		switch am["name"] {
@@ -222,9 +265,14 @@ func TestMonitorDocSummarySync(t *testing.T) {
 			}
 		case "探针数据冲突":
 			conflict = true
+		case "短时严重丢包":
+			severe = true
+			if !strings.Contains(am["trigger"].(string), "50%") {
+				t.Fatalf("短时严重丢包阈值应为 50%%: %s", am["trigger"])
+			}
 		}
 	}
-	if !down || !conflict {
-		t.Fatalf("告警表缺少线路中断/探针数据冲突: down=%v conflict=%v", down, conflict)
+	if !down || !conflict || !severe {
+		t.Fatalf("告警表缺少线路中断/探针数据冲突/短时严重丢包: down=%v conflict=%v severe=%v", down, conflict, severe)
 	}
 }

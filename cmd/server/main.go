@@ -21,7 +21,7 @@ import (
 	"netwatch/internal/server"
 )
 
-var version = "1.0.1"
+var version = "1.0.2"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -33,6 +33,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	egressURLs := []string{}
+	if v := os.Getenv("NW_EGRESS_URLS"); v != "" {
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				egressURLs = append(egressURLs, s)
+			}
+		}
+	}
+	egress := server.NewEgressMonitor(egressURLs)
+	go egress.Run(ctx)
 
 	store, err := server.NewStore(ctx, cfg.DBDSN)
 	if err != nil {
@@ -68,6 +79,9 @@ func main() {
 	ind := server.NewIndustryRunner(store, tsdb, eng)
 	ind.Start(ctx)
 
+	fn := server.NewFloorNetRunner(store, tsdb, eng)
+	fn.Start(ctx)
+
 	scan := server.NewScanRunner(store)
 	scan.SetShipper(shipper)
 	scan.Start(ctx)
@@ -98,18 +112,25 @@ func main() {
 		if !dbOK || !vmOK {
 			status = "degraded"
 		}
+		egressOK := egress.OK()
+		var egressCheckedAt int64
+		if t := egress.CheckedAt(); !t.IsZero() {
+			egressCheckedAt = t.Unix()
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":   status,
-			"version":  cfg.Version,
-			"uptime_s": int(time.Since(startedAt).Seconds()),
-			"checks":   map[string]bool{"db": dbOK, "vm": vmOK},
-			"time":     time.Now().Format(time.RFC3339),
+			"status":            status,
+			"version":           cfg.Version,
+			"uptime_s":          int(time.Since(startedAt).Seconds()),
+			"checks":            map[string]bool{"db": dbOK, "vm": vmOK},
+			"egress_ok":         egressOK,
+			"egress_checked_at": egressCheckedAt,
+			"time":              time.Now().Format(time.RFC3339),
 		})
 	})
 
-	r.Route("/api/agent", server.NewAgentAPI(cfg, store, eng, sched).Routes)
-	r.Route("/api/admin", server.NewAdminAPI(cfg, store, eng, sched, rep, mon, ind, tsdb, scan).Routes)
+	r.Route("/api/agent", server.NewAgentAPI(cfg, store, eng, sched, egress).Routes)
+	r.Route("/api/admin", server.NewAdminAPI(cfg, store, eng, sched, rep, mon, ind, fn, tsdb, scan).Routes)
 	r.Route("/api/screen", server.NewScreenAPI(store, eng, mon, ind, tsdb).Routes)
 
 	// 前端静态文件（web/dist 存在时挂载；SPA 路由回退到 index.html）

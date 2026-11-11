@@ -211,18 +211,20 @@ func commafy64(v int64) string {
 
 // repKindShort 告警类别短名（报告表格用；完整文案见 alert.go kindTitle）
 var repKindShort = map[string]string{
-	"line_down":      "线路中断",
-	"floor_down":     "楼层中断",
-	"blind":          "监控盲区",
-	"degraded":       "线路降质",
-	"speed_low":      "网速慢",
-	"probe_conflict": "数据冲突",
-	"site_down":      "网站不可达",
-	"site_conflict":  "外网数据冲突",
-	"cert_expiring":  "证书临期",
-	"monitor_down":   "内网服务不可达",
-	"probe_resource": "探针资源紧张",
-	"industry_down":  "行业网不可达",
+	"line_down":         "线路中断",
+	"floor_down":        "楼层中断",
+	"blind":             "监控盲区",
+	"degraded":          "线路降质",
+	"speed_low":         "网速慢",
+	"probe_conflict":    "数据冲突",
+	"site_down":         "网站不可达",
+	"site_conflict":     "外网数据冲突",
+	"cert_expiring":     "证书临期",
+	"monitor_down":      "内网服务不可达",
+	"probe_resource":    "探针资源紧张",
+	"industry_down":     "行业网不可达",
+	"floor_gw_down":     "楼层网关不可达",
+	"floor_anchor_down": "楼层汇聚设备不可达",
 }
 
 func repTable(name string, d *reportData) (*docxTable, bool) {

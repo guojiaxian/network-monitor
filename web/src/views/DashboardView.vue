@@ -112,6 +112,51 @@
       </div>
     </div>
 
+    <!-- 楼层网络：中心直接 ICMP 探测核心 SVI 网关与楼层汇聚/AC/104 汇聚锚点 -->
+    <section class="nw-card mb-3">
+      <div class="dash-sec-head">
+        <h5 class="mb-0">楼层网络 · 网关与汇聚设备</h5>
+        <span class="text-secondary small">中心服务器 ICMP 单包探测；相同 IP 共享设备只探一次</span>
+      </div>
+      <div v-if="floorNet.length" class="floor-net-wrap">
+        <div class="floor-net-group">
+          <div class="floor-net-group-head">
+            <span>核心 / 共同网关</span><span class="badge rounded-pill">{{ floorGateways.length }}</span>
+          </div>
+          <div class="floor-net-grid">
+            <div v-for="t in floorGateways" :key="t.class + t.target" class="floor-net-item"
+                 :title="`${t.floors} ${t.name} ${t.target}`">
+              <span class="floor-net-dot" :class="fnState(t)"></span>
+              <span class="floor-net-floor">{{ shortFloors(t.floors) }}</span>
+              <span class="floor-net-state" :class="fnState(t)">{{ fnText(t) }}</span>
+              <span class="floor-net-rtt">{{ fnRTT(t) }}</span>
+              <b class="floor-net-name">{{ t.name }}</b>
+              <code class="floor-net-ip">{{ t.target }}</code>
+            </div>
+          </div>
+        </div>
+        <div class="floor-net-group">
+          <div class="floor-net-group-head">
+            <span>楼层汇聚 / AC / 104 汇聚</span><span class="badge rounded-pill">{{ floorAnchors.length }}</span>
+          </div>
+          <div class="floor-net-grid">
+            <div v-for="t in floorAnchors" :key="t.class + t.target" class="floor-net-item"
+                 :title="`${t.floors} ${t.name} ${t.target}`">
+              <span class="floor-net-dot" :class="fnState(t)"></span>
+              <span class="floor-net-floor">{{ shortFloors(t.floors) }}</span>
+              <span class="floor-net-state" :class="fnState(t)">{{ fnText(t) }}</span>
+              <span class="floor-net-rtt">{{ fnRTT(t) }}</span>
+              <b class="floor-net-name">{{ t.name }}</b>
+              <code class="floor-net-ip">{{ t.target }}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-else class="dash-empty">
+        暂无楼层网关/汇聚设备数据。到「楼层配置」填写核心网关，或到「探测配置 → 中心监测」添加汇聚设备锚点。
+      </div>
+    </section>
+
     <!-- 互联网（内网 → 外网 · 宽带线路）：通栏卡片，高度随线路卡数量自适应 -->
     <section class="nw-card">
       <div class="dash-sec-head">
@@ -159,7 +204,7 @@ import { minuteCells, vmMinuteCells, applyStatusToCurrent } from '../utils'
 import HeartbeatGrid from '../components/HeartbeatGrid.vue'
 import CountUp from '../components/CountUp.vue'
 
-const lines = ref([]), unbound = ref([]), monitors = ref([]), indMons = ref([]), err = ref('')
+const lines = ref([]), unbound = ref([]), monitors = ref([]), indMons = ref([]), floorNet = ref([]), err = ref('')
 // 内→内/行业网心跳格：VM 逐分钟序列（详情页同款 avg_over_time[60s] step=60），
 // 终点前移 90s 避开在途分钟假灰。刷新对齐分钟边界 +5s：格子是分钟粒度（探测 30s/次
 // → 每分钟 2 样本聚成 1 格），整点过后新格刚完成即取，最陈 ~65s；查询频率 1 次/分钟，
@@ -257,6 +302,30 @@ const lineCounts = computed(() => {
   return c
 })
 
+// 楼层网络状态：网关与汇聚设备分组展示，卡片按固定列对齐，避免长短不一的 chip 参差换行。
+function floorRank(s) {
+  if ((s || '').startsWith('1-3楼')) return 10
+  if ((s || '').startsWith('wifi')) return 110
+  if ((s || '').startsWith('104号院')) return 120
+  const m = (s || '').match(/^(\d+)楼/)
+  return m ? parseInt(m[1], 10) * 10 : 999
+}
+function cmpFloor(a, b) {
+  const d = floorRank(a.floors) - floorRank(b.floors)
+  return d || String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN')
+}
+const floorGateways = computed(() => floorNet.value.filter(t => t.class === 'gateway').slice().sort(cmpFloor))
+const floorAnchors = computed(() => floorNet.value.filter(t => t.class === 'anchor').slice().sort(cmpFloor))
+function shortFloors(s) {
+  return (s || '')
+    .replace('104号院-38段、104号院-39段', '104号院-38/39')
+    .replace('wifi-34段、wifi-35段', 'wifi-34/35')
+    .replace('8楼-1、8楼-2', '8楼-1/2')
+}
+function fnState(t) { return !t.known ? 'unknown' : (t.up ? 'ok' : 'bad') }
+function fnText(t) { return !t.known ? '—' : (t.up ? '通' : '断') }
+function fnRTT(t) { return t.known && t.rtt_ms ? t.rtt_ms.toFixed(1) + 'ms' : '—' }
+
 // 在线 IP（当前值，非时间窗）：各楼层最近一次 IP 扫描的在线数，按 floor_id 去重后合计
 // （线路的 online_ips 来自 LatestFloorScans，即每楼层最近一次已完成扫描）
 const onlineIPs = computed(() => {
@@ -335,6 +404,7 @@ async function load() {
     unbound.value = d.unbound_probes || []
     monitors.value = d.internal_monitors || []
     indMons.value = d.industry_monitors || []
+    floorNet.value = d.floor_net || []
     if (d.loss_thresh > 0) lossThresh.value = d.loss_thresh
     err.value = ''
   } catch (e) { err.value = e.message }
@@ -353,3 +423,49 @@ onMounted(() => {
 })
 onUnmounted(() => { clearInterval(timer); clearTimeout(hbTimer) })
 </script>
+
+<style scoped>
+/* 楼层网络：网关/汇聚分组，卡片固定两行四列对齐，避免旧 flex chip 长短不一导致参差换行 */
+.floor-net-wrap { display: flex; flex-direction: column; gap: 12px; }
+.floor-net-group-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  font-size: 12px; font-weight: 600; color: #495057;
+}
+.floor-net-group-head .badge { background: #e9eef5; color: #5c6b7a; font-weight: 600; }
+.floor-net-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 10px;
+}
+.floor-net-item {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 52px;
+  grid-template-rows: auto auto; column-gap: 8px; row-gap: 1px; align-items: center;
+  min-width: 0; padding: 5px 9px; border: 1px solid #e3e8ee; border-radius: 6px;
+  background: #fbfcfd; transition: border-color .15s, background .15s;
+}
+.floor-net-item:hover { border-color: #cfd8e3; background: #fff; }
+.floor-net-dot {
+  grid-row: 1 / span 2; width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; background: #adb5bd;
+}
+.floor-net-dot.ok { background: #05c96b; box-shadow: 0 0 0 2px rgba(5, 201, 107, .12); }
+.floor-net-dot.bad { background: #dc3545; box-shadow: 0 0 0 2px rgba(220, 53, 69, .12); }
+.floor-net-floor {
+  grid-column: 2; grid-row: 1; font-size: 12px; color: #6c757d;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.floor-net-name {
+  grid-column: 2; grid-row: 2; font-size: 12px; font-weight: 600; color: #343a40;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.floor-net-state { grid-column: 3; grid-row: 1; font-size: 12px; font-weight: 600; color: #adb5bd; }
+.floor-net-state.ok { color: #05a35a; }
+.floor-net-state.bad { color: #dc3545; }
+.floor-net-rtt {
+  grid-column: 4; grid-row: 1; text-align: right; font-size: 11px; color: #6c757d;
+  font-variant-numeric: tabular-nums;
+}
+.floor-net-ip {
+  grid-column: 3 / span 2; grid-row: 2; text-align: right; padding: 0; background: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; color: #495057;
+}
+</style>

@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=2" />
   <title>物探中心网络监控系统 · NetWatch</title>
+  <script>
+    // 大屏公开直链兼容：/screen、/screen/floor（含末尾 /）在加载应用前跳到 hash 路由。
+    // 必须在模块脚本之前执行——/screen/floor 下相对静态资源会解析成 /screen/assets/… 而 404，
+    // 等不到 main.js 里的跳转逻辑；先跳走可避免落在需要登录的首页。
+    (function () {
+      var p = location.pathname.replace(/\/+$/, '')
+      if (p === '/screen' || p === '/screen/floor') location.replace('/#' + p)
+    })()
+  </script>
 </head>
 <body>
   <div id="app"></div>

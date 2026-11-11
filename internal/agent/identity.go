@@ -21,6 +21,22 @@ type Identity struct {
 	Secret  string `json:"secret"`
 }
 
+// ReadIdentity 读取已注册探针身份（relay 子命令复用同一份身份）。
+func ReadIdentity(stateDir string) (Identity, error) {
+	b, err := os.ReadFile(filepath.Join(stateDir, "identity.json"))
+	if err != nil {
+		return Identity{}, err
+	}
+	var id Identity
+	if err := json.Unmarshal(b, &id); err != nil {
+		return Identity{}, err
+	}
+	if id.AgentID == "" || id.Secret == "" {
+		return Identity{}, fmt.Errorf("identity.json 缺少 agent_id/secret")
+	}
+	return id, nil
+}
+
 func (a *Agent) identityPath() string { return filepath.Join(a.stateDir, "identity.json") }
 
 func (a *Agent) hasIdentity() bool {
@@ -142,9 +158,12 @@ func (a *Agent) refreshConfig(ctx context.Context) error {
 	return nil
 }
 
+// ConfigPollInterval 配置轮询周期（管理后台改探测配置后的生效延迟）。
+const ConfigPollInterval = 30 * time.Second
+
 // configWatch 每 30s 轮询配置；凭证失效时触发整周期重注册。
 func (a *Agent) configWatch(ctx context.Context) {
-	t := time.NewTicker(30 * time.Second)
+	t := time.NewTicker(ConfigPollInterval)
 	defer t.Stop()
 	for {
 		select {

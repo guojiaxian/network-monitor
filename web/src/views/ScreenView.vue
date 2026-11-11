@@ -76,7 +76,7 @@
             </div>
             <div class="lc-sub">{{ l.floor_name || '未关联楼层' }}<template v-if="l.public_ip"> · {{ l.public_ip }}</template><template v-if="l.isp"> · {{ l.isp }}</template></div>
             <HeartbeatGrid :cells="hbCellsOf(l)" :end="hbEndOf(l)" />
-            <div class="lc-metrics">
+            <div class="lc-metrics lc-metrics-4">
               <div class="m">
                 <i>时延</i><b>{{ rttOf(l) }}</b><u>ms</u>
               </div>
@@ -85,6 +85,9 @@
               </div>
               <div class="m">
                 <i>测速</i><b>{{ speedOf(l) }}</b><u>{{ speedUnitOf(l) }}</u>
+              </div>
+              <div class="m">
+                <i>在线 IP</i><b>{{ l.online_sum ?? '—' }}</b><u>{{ l.online_sum != null ? ' / ' + l.scan_sum : '' }}</u>
               </div>
             </div>
           </div>
@@ -360,6 +363,10 @@ onUnmounted(() => { clearInterval(timer); clearInterval(clockTimer); if (ro) ro.
 /* 指标：弹性占据卡片剩余高度、行内容垂直居中——顶部（标题/副题/心跳）在同行卡片间严格对齐，
    多余空间不会堆在卡片底部 */
 .lc-metrics { display: flex; gap: 2.6vmin; flex-wrap: wrap; flex: 1 1 auto; align-content: center; }
+/* 线路卡 4 项指标固定 2×2：时延/丢包一行、测速/在线 IP 一行。
+   原 flex-wrap 会随数值位数变化（如时延 9→10ms、测速有值/—、在线数位数）时而在同一行、
+   时而把「在线 IP」挤到第二行——卡片间不对齐，屏幕偏矮时第二行还可能被裁掉。 */
+.lc-metrics-4 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6vmin 2.2vmin; }
 .m { display: flex; align-items: baseline; gap: .5vmin; font-variant-numeric: tabular-nums; }
 .m i { font-style: normal; font-size: clamp(10px, 1.3vmin, 14px); color: #7c8fab; }
 .m b { font-size: clamp(15px, 2vmin, 24px); font-weight: 600; color: #e6eef8; }
@@ -381,9 +388,12 @@ onUnmounted(() => { clearInterval(timer); clearInterval(clockTimer); if (ro) ro.
 @keyframes breath { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); } 50% { box-shadow: 0 0 2.4vmin 0 color-mix(in srgb, var(--st) 35%, transparent); } }
 
-/* 窄屏：右栏落到下方 */
+/* 窄屏（≤1100px）：card 墙回退 auto-fill 自然高度，由 .scr-body 整区滚动。
+   注意 .scr-main 平时是 overflow:hidden（一屏铺满用），这里必须放开，
+   否则第二行之后的卡片（含卡片底部「在线 IP」）会被直接裁掉且页面无法滚动。 */
 @media (max-width: 1100px) {
-  .scr-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .scr-body { display: block; overflow-y: auto; }
+  .scr-main { overflow: visible; }
   .scr-kpis { display: none; }
   .scr-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

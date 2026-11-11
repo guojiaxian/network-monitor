@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS floors (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   cidr TEXT NOT NULL DEFAULT '',
+  gateway TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS lines (
@@ -161,6 +162,19 @@ ALTER TABLE probes DROP COLUMN IF EXISTS grp;
 DELETE FROM settings WHERE key='agent_config_external';
 ALTER TABLE probes ADD COLUMN IF NOT EXISTS sysinfo JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS geo TEXT NOT NULL DEFAULT '';
+-- 楼层核心/共同网关（核心交换机 SVI）；空=不监测。wifi 两段、104 两段可共用同一地址。
+ALTER TABLE floors ADD COLUMN IF NOT EXISTS gateway TEXT NOT NULL DEFAULT '';
+-- 报表发送时刻与生成时刻拆分（2026-11-10）：mailed_at 记录邮件发出时刻（NULL=待发）。
+-- 存量报表在拆分的同一批迁移里一次性回填为"已发"，避免升级后被当成待发报表重复群发。
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='reports' AND column_name='mailed_at') THEN
+    ALTER TABLE reports ADD COLUMN mailed_at TIMESTAMPTZ;
+    UPDATE reports SET mailed_at = created_at;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_reports_kind_mailed ON reports(kind, mailed_at);
 CREATE TABLE IF NOT EXISTS line_floors (
   line_id  INT NOT NULL REFERENCES lines(id) ON DELETE CASCADE,
   floor_id INT NOT NULL REFERENCES floors(id) ON DELETE CASCADE,
@@ -329,6 +343,7 @@ type AlertSettings struct {
 	NotifyTo        []string `json:"notify_to"`          // 默认收件组
 	NotifyToP0P1    []string `json:"notify_to_p0p1"`     // P0/P1 收件组（为空则用默认）
 	NotifyToP2      []string `json:"notify_to_p2"`       // P2 收件组（为空则用默认）
+	MailSendP2      bool     `json:"mail_send_p2"`       // P2 告警也发邮件（默认 false：邮件只报 P0/P1）
 }
 
 func DefaultAlertSettings() AlertSettings {
@@ -336,7 +351,7 @@ func DefaultAlertSettings() AlertSettings {
 		BlindSecs:       60,
 		LineDownSecs:    30,
 		LossPctThresh:   10,
-		LossWindowMin:   5,
+		LossWindowMin:   3,
 		EvalIntervalS:   5,
 		TypeFailWindowS: 60,
 	}
@@ -345,17 +360,18 @@ func DefaultAlertSettings() AlertSettings {
 // SeedDefaults 首次启动写入默认设置（不覆盖已有值）
 func (s *Store) seedSettings(ctx context.Context) error {
 	defaults := map[string]any{
-		"agent_config":      DefaultProbeConfig(),
-		"smtp":              SMTPSettings{},
-		"alert_settings":    DefaultAlertSettings(),
-		"speed_settings":    DefaultSpeedSettings(),
-		"syslog_settings":   DefaultSyslogSettings(),
-		"report_settings":   DefaultReportSettings(),
-		"notify_channels":   DefaultNotifyChannels(),
-		"snmp_settings":     DefaultSnmpSettings(),
-		"internal_monitors": DefaultMonitorSettings(),
-		"industry_monitors": DefaultIndustrySettings(),
-		"scan_settings":     DefaultScanSettings(),
+		"agent_config":       DefaultProbeConfig(),
+		"smtp":               SMTPSettings{},
+		"alert_settings":     DefaultAlertSettings(),
+		"speed_settings":     DefaultSpeedSettings(),
+		"syslog_settings":    DefaultSyslogSettings(),
+		"report_settings":    DefaultReportSettings(),
+		"notify_channels":    DefaultNotifyChannels(),
+		"snmp_settings":      DefaultSnmpSettings(),
+		"internal_monitors":  DefaultMonitorSettings(),
+		"industry_monitors":  DefaultIndustrySettings(),
+		"floor_net_monitors": DefaultFloorNetSettings(),
+		"scan_settings":      DefaultScanSettings(),
 	}
 	for k, v := range defaults {
 		b, _ := json.Marshal(v)
@@ -519,11 +535,12 @@ WHERE now() BETWEEN si.starts_at AND si.ends_at`)
 // ---------- 报表 ----------
 
 type ReportRow struct {
-	ID          int64     `json:"id"`
-	Kind        string    `json:"kind"`
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          int64      `json:"id"`
+	Kind        string     `json:"kind"`
+	PeriodStart time.Time  `json:"period_start"`
+	PeriodEnd   time.Time  `json:"period_end"`
+	CreatedAt   time.Time  `json:"created_at"`
+	MailedAt    *time.Time `json:"mailed_at"` // 邮件发出时刻；NULL=待发送
 }
 
 func (s *Store) CreateReport(ctx context.Context, kind string, start, end time.Time, data any) (int64, error) {
@@ -538,7 +555,7 @@ func (s *Store) ListReports(ctx context.Context, kind string, limit int) ([]Repo
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT id, kind, period_start, period_end, created_at FROM reports`
+	q := `SELECT id, kind, period_start, period_end, created_at, mailed_at FROM reports`
 	var args []any
 	if kind != "" && kind != "all" {
 		q += ` WHERE kind=$1`
@@ -553,12 +570,39 @@ func (s *Store) ListReports(ctx context.Context, kind string, limit int) ([]Repo
 	out := []ReportRow{}
 	for rows.Next() {
 		var r ReportRow
-		if err := rows.Scan(&r.ID, &r.Kind, &r.PeriodStart, &r.PeriodEnd, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Kind, &r.PeriodStart, &r.PeriodEnd, &r.CreatedAt, &r.MailedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// LatestUnmailedReport 该类型最新一期报表的待发状态（独立发送时刻调度用）。
+// 只看最新一期：若最新一期已发送，更早的"未发送"报表一律不再补发——
+// 避免 SMTP 长时间故障恢复后把积压的历史报表一次性群发。
+func (s *Store) LatestUnmailedReport(ctx context.Context, kind string) (int64, bool, error) {
+	var id int64
+	var mailed *time.Time
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, mailed_at FROM reports WHERE kind=$1 ORDER BY period_end DESC, id DESC LIMIT 1`, kind).
+		Scan(&id, &mailed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if mailed != nil {
+		return 0, false, nil // 最新一期已发送（无待发）
+	}
+	return id, true, nil
+}
+
+// MarkReportMailed 标记报表邮件已发出（防重发；发送失败不调用，留待下一轮 tick 重试）
+func (s *Store) MarkReportMailed(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, `UPDATE reports SET mailed_at=now() WHERE id=$1`, id)
+	return err
 }
 
 // ReportExists 判断某周期报表是否已生成（防重复推送）
@@ -594,25 +638,33 @@ type AuditRow struct {
 	Detail    string    `json:"detail"`
 }
 
-func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditRow, error) {
+// ListAudit 审计日志（服务端分页：返回满足条件的 {rows, total}，新的在前）
+func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]AuditRow, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, created_at, username, action, detail FROM audit ORDER BY id DESC LIMIT $1`, limit)
+		`SELECT id, created_at, username, action, detail FROM audit ORDER BY id DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	out := []AuditRow{}
 	for rows.Next() {
 		var r AuditRow
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.Username, &r.Action, &r.Detail); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // ---------- 探针版本升级 ----------
@@ -990,6 +1042,7 @@ type FloorRow struct {
 	ID        int              `json:"id"`
 	Name      string           `json:"name"`
 	CIDR      string           `json:"cidr"`
+	Gateway   string           `json:"gateway"` // 核心/共同网关（核心交换机 SVI），空=不监测
 	LineCount int              `json:"line_count"`
 	Lines     []FloorLineBrief `json:"lines"` // 关联线路（名称+出口公网 IP，楼层配置页展示用）
 }
@@ -1142,7 +1195,7 @@ func sortFloorsForDisplay(fs []FloorRow) {
 
 func (s *Store) ListFloors(ctx context.Context) ([]FloorRow, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT f.id, f.name, f.cidr,
+SELECT f.id, f.name, f.cidr, COALESCE(f.gateway,''),
        (SELECT count(*) FROM line_floors lf WHERE lf.floor_id = f.id) AS line_count,
        COALESCE((SELECT json_agg(json_build_object('id',l.id,'name',l.name,'public_ip',l.public_ip) ORDER BY l.id)
                  FROM line_floors lf JOIN lines l ON l.id = lf.line_id WHERE lf.floor_id = f.id), '[]'::json)
@@ -1155,7 +1208,7 @@ FROM floors f ORDER BY f.id`)
 	for rows.Next() {
 		var r FloorRow
 		var linesJSON []byte
-		if err := rows.Scan(&r.ID, &r.Name, &r.CIDR, &r.LineCount, &linesJSON); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.CIDR, &r.Gateway, &r.LineCount, &linesJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(linesJSON, &r.Lines)
@@ -1215,7 +1268,7 @@ func (s *Store) GetFloor(ctx context.Context, id int) (FloorRow, error) {
 	return f, err
 }
 
-func (s *Store) UpsertFloor(ctx context.Context, id *int, name, cidr string) (int, error) {
+func (s *Store) UpsertFloor(ctx context.Context, id *int, name, cidr, gateway string) (int, error) {
 	// 名称唯一性检查与写入必须原子：并发同名创建曾出现多个成功（先查后插竞态）。
 	// 历史库可能已有重复名，不新增唯一索引；用事务级 advisory lock 串行化同名写入。
 	tx, err := s.pool.Begin(ctx)
@@ -1240,7 +1293,7 @@ func (s *Store) UpsertFloor(ctx context.Context, id *int, name, cidr string) (in
 		return 0, fmt.Errorf("楼层名 %q 已存在", name)
 	}
 	if id != nil {
-		ct, err := tx.Exec(ctx, `UPDATE floors SET name=$2, cidr=$3 WHERE id=$1`, *id, name, cidr)
+		ct, err := tx.Exec(ctx, `UPDATE floors SET name=$2, cidr=$3, gateway=$4 WHERE id=$1`, *id, name, cidr, gateway)
 		if err != nil {
 			return 0, err
 		}
@@ -1254,7 +1307,7 @@ func (s *Store) UpsertFloor(ctx context.Context, id *int, name, cidr string) (in
 	}
 	var nid int
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO floors(name, cidr) VALUES($1,$2) RETURNING id`, name, cidr).Scan(&nid); err != nil {
+		`INSERT INTO floors(name, cidr, gateway) VALUES($1,$2,$3) RETURNING id`, name, cidr, gateway).Scan(&nid); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -127,7 +127,7 @@ html.nw-gutter { scrollbar-gutter: stable; }
 .hbg i { width: var(--sz, 15px); height: var(--sz, 15px); border-radius: 3px; flex: 0 0 auto; }
 .hbg i:hover { outline: 2px solid #2f81f7; outline-offset: 1px; }
 .hbg-ok { background: #05c96b; }
-.hbg-partial { background: #f0883e; } /* 橙：周期内至少一次未连通但后续恢复 */
+.hbg-partial { background: #f0883e; } /* 橙：该分钟有丢包，但 5 分钟中位数未超降质阈值 */
 /* 紫罗兰：降级——按目标丢包率下中位数超阈值（与 P2 告警同口径）。
    原用黄 #ffc107 与橙 #f0883e 色相仅差 18°（同为暖色），小格上难分，且橙黄之间
    已被红色一端挤住、无法再靠明度拉开；改用紫与橙/绿/红/灰全色系分隔。
@@ -150,6 +150,10 @@ html.nw-gutter { scrollbar-gutter: stable; }
 .trend-zoom { cursor: grab; user-select: none; touch-action: none; }
 .trend-zoom.dragging { cursor: grabbing; }
 .trend-zoom.zoomed { outline: 1px dashed rgba(47, 129, 247, .55); outline-offset: 5px; border-radius: 4px; }
+/* 探测历史放大后的横拉条：轨道=完整窗口，滑块=当前查看范围，拖动平移 */
+.hist-scrub { position: relative; height: 8px; border-radius: 4px; background: #e9edf3; cursor: pointer; user-select: none; }
+.hist-scrub-thumb { position: absolute; top: -3px; height: 14px; border-radius: 7px; background: rgba(47, 129, 247, .28); border: 1px solid rgba(47, 129, 247, .65); cursor: grab; }
+.hist-scrub-thumb:active { cursor: grabbing; background: rgba(47, 129, 247, .45); }
 
 /* 探测历史筛选卡分层：控件行 + 多选 chips 独占整行（任意窗口宽下换行点确定，不与控件混排错乱）；
    容器最小高度=控件行+chips 行，无 chips 页签（全部/行业网）留白补齐，页签切换卡高恒定 */
@@ -307,3 +311,5 @@ table.nw-table td .btn, table.nw-table th .btn { white-space: nowrap; }
   .dash-alerts { position: static; }
   .dash-alarm-list { max-height: 340px; }
 }
+/* 报表推送计划：时刻/数量控件固定宽度，避免 flex 行内被拉宽或标签折行 */
+.nw-time-sm { width: 128px; }

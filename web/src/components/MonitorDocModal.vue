@@ -3,7 +3,7 @@
     <div class="monitor-doc">
       <div class="d-flex align-items-center mb-2">
         <p class="text-secondary small mb-0">
-          数据<b>实时取自系统配置</b>——打开即刷新，任何周期/超时/开关的改动即刻反映在此；行尾标注各数据的配置入口。
+          数值实时取自系统配置；标注「代码固定」的为内置机制，不可配置。
         </p>
         <button class="nw-btn nw-btn-neutral nw-btn-spin ms-auto flex-shrink-0" :disabled="loading" @click="load" title="仅重新拉取说明数据显示，不触发探测">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>刷新
@@ -37,6 +37,19 @@
           </table>
         </div>
 
+        <h6>心跳格颜色</h6>
+        <div class="text-secondary small mb-1">{{ doc.heartbeat.cell }} · {{ doc.heartbeat.windows }}</div>
+        <table class="table table-sm mb-1 doc-table">
+          <thead><tr><th style="width:12%">颜色</th><th>判定</th></tr></thead>
+          <tbody>
+            <tr v-for="c in doc.heartbeat.colors" :key="c.name">
+              <td><span class="doc-swatch" :style="{ background: c.color }"></span>{{ c.name }}</td>
+              <td>{{ c.rule }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="doc.heartbeat.note" class="text-secondary small mb-2">{{ doc.heartbeat.note }}</div>
+
         <h6>告警触发与自动恢复（触发条件中的数值为实时配置）</h6>
         <table class="table table-sm mb-2 doc-table">
           <thead><tr><th style="width:8%">级别</th><th style="width:19%">告警</th><th>触发条件</th><th style="width:18%">自动恢复</th></tr></thead>
@@ -52,10 +65,7 @@
 
         <h6>通用机制</h6>
         <ul class="small doc-ul mb-0">
-          <li>触发与恢复均自动发通知（邮件按 P0P1 / P2 分组投递，钉钉/企微恒推 P0P1、P2 需开关）；支持按线路静默。收件组在「告警策略」页配置。</li>
-          <li>中心重启时未恢复告警统一收口（历史保留）；目标删除对应告警自动收口。</li>
-          <li>探针断网样本本地缓存（≤48MB）恢复自动补传；样本时钟快于服务器 2 分钟按服务器时间钳位（请保持 NTP）。</li>
-          <li>数据保留：时序库 <b>2 年</b>；扫描记录 7 天 / 3000 条；告警、审计、报表长期保留于 PostgreSQL。</li>
+          <li v-for="n in doc.notes" :key="n">{{ n }}</li>
         </ul>
       </template>
     </div>
@@ -115,6 +125,7 @@ function levelClass(lv) {
 .doc-table td, .doc-table th { padding: .28rem .5rem; vertical-align: middle; }
 .doc-items { margin-top: 2px; }
 .doc-item { font-size: .78rem; padding-left: 10px; border-left: 2px solid #e3e8ef; margin: 2px 0; }
+.doc-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
 .doc-ul { padding-left: 18px; }
 .doc-ul li { margin-bottom: 2px; }
 </style>

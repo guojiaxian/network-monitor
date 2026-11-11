@@ -29,7 +29,7 @@ func (e *Engine) backfillRing(ctx context.Context) {
 	for _, r := range rows {
 		known[r.ID] = true
 	}
-	var series []ExportSeries
+	var series, lossSeries []ExportSeries
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
@@ -38,9 +38,15 @@ func (e *Engine) backfillRing(ctx context.Context) {
 		c, cancel := context.WithTimeout(ctx, 8*time.Second)
 		series, lastErr = e.tsdb.Export(c, `{__name__="nw_ping_ok"}`,
 			time.Now().Add(-ringBackfillWin).Unix(), time.Now().Unix())
+		if lastErr == nil {
+			// 丢包率序列用于恢复"轮丢包率"（方案C）：失败不阻塞主回填，
+			// 缺失时 applyRingBackfill 按成功=0/失败=100 兜底。
+			lossSeries, _ = e.tsdb.Export(c, `{__name__="nw_ping_loss_pct"}`,
+				time.Now().Add(-ringBackfillWin).Unix(), time.Now().Unix())
+		}
 		cancel()
 		if lastErr == nil {
-			n := e.applyRingBackfill(series, known, time.Now().Add(-ringBackfillWin))
+			n := e.applyRingBackfill(series, lossSeries, known, time.Now().Add(-ringBackfillWin))
 			e.log.Printf("ring backfill: %d 个探针回填 %d 条 ping 样本（近 %.0f 分钟）",
 				len(series2probes(series, known)), n, ringBackfillWin.Minutes())
 			return
@@ -63,7 +69,19 @@ func series2probes(series []ExportSeries, known map[string]bool) map[string]bool
 // applyRingBackfill 把导出序列转成 pingRec 合入各探针样本环，返回回填后的样本总数。
 // 已删探针（不在 known）跳过，防幽灵聚合；网关样本跳过（与 Ingest 一致）；
 // 与在途 Ingest 可能重叠的样本按 (target,ts) 去重；合入后统一按时间排序并修剪窗口。
-func (e *Engine) applyRingBackfill(series []ExportSeries, known map[string]bool, cutoff time.Time) int {
+// lossSeries 为 nw_ping_loss_pct 导出（方案C 的轮丢包率），缺失时按 ok 兜底 0/100。
+func (e *Engine) applyRingBackfill(series, lossSeries []ExportSeries, known map[string]bool, cutoff time.Time) int {
+	// (probe|target|ts秒) → 轮丢包率 %
+	lossAt := map[string]float64{}
+	for _, s := range lossSeries {
+		id := s.Metric["probe"]
+		target := s.Metric["target"]
+		for i, ts := range s.Timestamps {
+			if i < len(s.Values) {
+				lossAt[id+"\x00"+target+"\x00"+strconv.FormatInt(ts/1000, 10)] = s.Values[i]
+			}
+		}
+	}
 	per := map[string][]pingRec{}
 	for _, s := range series {
 		id := s.Metric["probe"]
@@ -72,7 +90,12 @@ func (e *Engine) applyRingBackfill(series []ExportSeries, known map[string]bool,
 		}
 		target := s.Metric["target"]
 		for i, ts := range s.Timestamps {
-			per[id] = append(per[id], pingRec{target: target, ok: s.Values[i] >= 0.5, ts: time.UnixMilli(ts)})
+			if i >= len(s.Values) {
+				continue
+			}
+			t := time.UnixMilli(ts)
+			loss := lossAt[id+"\x00"+target+"\x00"+strconv.FormatInt(ts/1000, 10)]
+			per[id] = append(per[id], pingRec{target: target, ok: s.Values[i] >= 0.5, ts: t, loss: loss})
 		}
 	}
 	e.mu.Lock()

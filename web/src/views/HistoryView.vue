@@ -140,16 +140,18 @@
     <div class="nw-card mb-3">
       <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
         <h6 class="mb-0">{{ f.type === 'ipscan' ? '扫描趋势' : '窗口趋势' }}</h6>
-        <span v-if="f.type !== 'ipscan'" class="text-secondary small">每格 ≈ {{ bucketSpanText }} · {{ f.type === 'speed' ? '折线为下载速率' : '折线为平均时延' }}</span>
+        <span v-if="f.type !== 'ipscan'" class="text-secondary small">
+          每格 ≈ {{ bucketSpanText }} · {{ f.type === 'speed' ? '折线为下载速率' : '折线为平均时延' }}
+        </span>
         <span v-else class="text-secondary small">每格 = 一次扫描批次 · 折线为在线 IP 数</span>
         <template v-if="zoomed">
           <span class="badge text-bg-primary">{{ fmtRange(view.start) }} ~ {{ fmtRange(view.end) }}</span>
           <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetZoom">复位</button>
         </template>
         <span v-if="f.type !== 'ipscan'" class="ms-auto small text-secondary d-inline-flex align-items-center gap-2">
-          <span class="hbg-dot hbg-ok"></span>全部成功
-          <span class="hbg-dot hbg-partial"></span>有失败已恢复
-          <span class="hbg-dot hbg-degraded"></span>降级
+          <span class="hbg-dot hbg-ok"></span>无丢包
+          <span class="hbg-dot hbg-partial"></span>有丢包（未超阈值）
+          <span class="hbg-dot hbg-degraded"></span>降级（丢包超阈值）
           <span class="hbg-dot hbg-fail"></span>全部失败
           <span class="hbg-dot hbg-nodata"></span>暂停/无探测
         </span>
@@ -162,6 +164,7 @@
       <div class="trend-zoom" :class="{ dragging, zoomed }" @wheel.prevent="onWheel" @mousedown.prevent="onDown" @dblclick="resetZoom">
         <!-- VM 页签：方格条（≤240 桶）+ 刻度 + 多系列图例 -->
         <template v-if="f.type !== 'ipscan'">
+          <!-- VM 全窗口趋势方格条 -->
           <!-- 方格条槽位固定 22px（有数据=方格条，无数据=同高提示），避免模块跳动 -->
           <div style="height: 22px">
             <div class="hbg hbg-fill" v-if="displayBuckets.length && displayBuckets.some(b => b.n > 0)">
@@ -208,7 +211,12 @@
         </template>
         <div style="height: 280px" class="mt-2"><canvas id="histTrend"></canvas></div>
       </div>
-      <div v-if="f.type !== 'ipscan'" class="text-secondary small mt-1">趋势区交互：滚轮缩放 · 拖动平移 · 双击复位（放大后自动加载该时段的细分数据；KPI 与明细表仍为完整窗口口径）</div>
+      <!-- 放大后的横拉条：拖动滑块在完整窗口内平移查看范围（滚轮缩放后出现） -->
+      <div v-if="zoomed && f.type !== 'ipscan'" class="hist-scrub mt-2" title="拖动平移查看范围"
+           @mousedown.prevent="onScrubDown" @dblclick.stop="resetZoom">
+        <div class="hist-scrub-thumb" :style="scrubThumbStyle"></div>
+      </div>
+      <div v-if="f.type !== 'ipscan'" class="text-secondary small mt-1">趋势区交互：滚轮缩放 · 拖动平移 · 双击复位（放大后可用下方横拉条平移；KPI 与明细表仍为完整窗口口径）</div>
       <div v-else class="text-secondary small mt-1">批次条颜色 = 本批在线数与「上一批次」（时间上紧邻的前一次扫描，同楼层范围）对比：≥90% 绿 / 60%~90% 黄 / &lt;60% 红，悬停格子可见具体对比数值；首个批次无基准不判色。绝对在线率是子网地址占用率，随昼夜周期天然波动，不作判色依据。点击记录行的「格子墙」前往 IP 扫描页查看逐 IP 明细。</div>
     </div>
 
@@ -351,9 +359,10 @@ let viewSeq = 0, viewTimer = null
 // 类型 → VM 指标（labels 下拉枚举用）
 const TYPE_METRIC = {
   ping: 'nw_ping_ok', tcp: 'nw_tcp_ok', dns: 'nw_dns_ok', http: 'nw_http_ok',
-  monitor: 'nw_monitor_ok', industry: 'nw_industry_ok', speed: 'nw_speed_down_mbps',
+  monitor: 'nw_monitor_ok', industry: 'nw_industry_ok', floornet: 'nw_floor_net_ok',
+  speed: 'nw_speed_down_mbps',
 }
-const TYPE_LABEL = { ping: 'Ping', tcp: 'TCP', dns: 'DNS', http: 'HTTP', monitor: '内→内', industry: '行业网', speed: '测速' }
+const TYPE_LABEL = { ping: 'Ping', tcp: 'TCP', dns: 'DNS', http: 'HTTP', monitor: '内→内', industry: '行业网', floornet: '楼层网络', speed: '测速' }
 // 类型页签（标题下方切换，替代下拉）
 const typeTabs = [
   { v: 'all', label: '全部' },
@@ -363,11 +372,12 @@ const typeTabs = [
   { v: 'http', label: 'HTTP 网页' },
   { v: 'monitor', label: '内→内监控' },
   { v: 'industry', label: '行业网监测' },
+  { v: 'floornet', label: '楼层网络' },
   { v: 'speed', label: '定时测速' },
   { v: 'ipscan', label: 'IP 扫描' },
 ]
 
-const needProbe = computed(() => f.value.type !== 'monitor' && f.value.type !== 'industry' && f.value.type !== 'ipscan')
+const needProbe = computed(() => f.value.type !== 'monitor' && f.value.type !== 'industry' && f.value.type !== 'floornet' && f.value.type !== 'ipscan')
 // 时间范围选项：测速周期=1 小时，测速页签删去 1/6 小时（8 小时起步）；默认选择均为最近 24 小时
 const rangeOptions = computed(() => {
   const base = [['28800', '最近 8 小时'], ['86400', '最近 24 小时'], ['259200', '最近 3 天'],
@@ -376,7 +386,7 @@ const rangeOptions = computed(() => {
   return [['3600', '最近 1 小时'], ['21600', '最近 6 小时'], ...base]
 })
 const showTarget = computed(() => f.value.type !== 'all' && f.value.type !== 'speed' && f.value.type !== 'ipscan')
-const showClass = computed(() => f.value.type === 'ping' || f.value.type === 'all')
+const showClass = computed(() => f.value.type === 'ping' || f.value.type === 'floornet' || f.value.type === 'all')
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const colCount = computed(() => 5 + (f.value.type === 'all' ? 1 : 0) + (showClass.value ? 1 : 0))
 const zoomed = computed(() => !!view.value && queryWin.start > 0 &&
@@ -572,7 +582,7 @@ const fmtNum = (x) => (x === undefined || x === null || isNaN(x)) ? '—' : Numb
 const fmtTs = (ms) => dayjs(ms).format('YYYY-MM-DD HH:mm:ss')
 const fmtRange = (ts) => dayjs.unix(ts).format('MM-DD HH:mm')
 const typeLabel = (t) => TYPE_LABEL[t] || t
-const classLabel = (c) => (c === 'gw' ? '网关' : (c === 'public' ? '公网' : '—'))
+const classLabel = (c) => (c === 'gw' ? '网关' : (c === 'public' ? '公网' : (c === 'gateway' ? '核心网关' : (c === 'anchor' ? '汇聚设备' : '—'))))
 
 // 多系列折线：调色板 + 系列名（全部类型时加类型前缀，避免同名目标混淆）
 const PALETTE = ['#2f81f7', '#05c96b', '#f0883e', '#d6506e', '#9d7df0', '#00b8d9',
@@ -672,9 +682,10 @@ function fmtBucket(ts) {
 function bucketClass(b) {
   if (!b.n) return 'hbg-nodata'
   if (b.ok_n <= 0) return 'hbg-fail'
-  // 降级黄格：桶内按目标丢包率下中位数超阈值（后端 PL，与 P2 告警同口径）
+  // 紫格：桶内按目标丢包率下中位数超阈值（后端 PL，与 P2 告警同口径）
   if ((b.pl || 0) > lossThresh.value) return 'hbg-degraded'
-  if (b.ok_n < b.n) return 'hbg-partial'
+  // 橙格：ping 桶有丢包（PL>0）；非 ping 类型无 PL，退化为"有失败"
+  if ((b.pl || 0) > 0 || b.ok_n < b.n) return 'hbg-partial'
   return 'hbg-ok'
 }
 function bucketTitle(b) {
@@ -876,7 +887,8 @@ function renderTrend() {
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: 'index', intersect: false },
+      // 悬停只显示最近一条线的名称，避免 index 模式把全部系列塞进大提示框遮挡图表
+      interaction: { mode: 'nearest', intersect: false },
       scales: {
         x: { ticks: { maxTicksLimit: 8, color: '#6c757d', font: { size: 10 } }, grid: { display: false } },
         y: { title: { display: true, text: yTitle, color: '#6c757d', font: { size: 10 } },
@@ -885,7 +897,17 @@ function renderTrend() {
           title: { display: true, text: '下载 (Mbps)', color: '#6c757d', font: { size: 10 } },
           ticks: { maxTicksLimit: 5, color: '#6c757d', font: { size: 10 } } },
       },
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          displayColors: false,
+          position: 'nearest',
+          callbacks: {
+            title: () => '',
+            label: (ctx) => ctx.dataset.label || '',
+          },
+        },
+      },
     },
   })
 }
@@ -1003,6 +1025,48 @@ function onUp() {
   window.removeEventListener('mouseup', onUp)
 }
 
+// ---------- 横拉条（缩放后显示在横轴下方）：拖动滑块在完整窗口内平移 ----------
+let scrubX0 = 0, scrubW = 1, scrubTotal = 0, scrubStart = null
+const scrubThumbStyle = computed(() => {
+  if (!view.value || !queryWin.start) return { display: 'none' }
+  const total = Math.max(1, queryWin.end - queryWin.start)
+  const span = Math.min(total, Math.max(1, view.value.end - view.value.start))
+  const left = Math.min(100, Math.max(0, ((view.value.start - queryWin.start) / total) * 100))
+  const width = Math.min(100 - left, Math.max(1.5, (span / total) * 100))
+  return { left: left + '%', width: width + '%' }
+})
+
+function onScrubDown(e) {
+  if (!view.value || !queryWin.start) return
+  scrubX0 = e.clientX
+  scrubW = Math.max(1, e.currentTarget.getBoundingClientRect().width)
+  scrubTotal = queryWin.end - queryWin.start
+  scrubStart = { ...view.value }
+  window.addEventListener('mousemove', onScrubMove)
+  window.addEventListener('mouseup', onScrubUp)
+}
+
+function onScrubMove(e) {
+  if (!scrubStart) return
+  const span = scrubStart.end - scrubStart.start
+  const dt = Math.round((e.clientX - scrubX0) / scrubW * scrubTotal)
+  let s = scrubStart.start + dt
+  const maxS = queryWin.end - span
+  if (s < queryWin.start) s = queryWin.start
+  if (s > maxS) s = maxS
+  view.value = { start: s, end: s + span }
+  requestRender()
+}
+
+function onScrubUp() {
+  if (!scrubStart) return
+  scrubStart = null
+  renderTrend()
+  scheduleViewFetch()
+  window.removeEventListener('mousemove', onScrubMove)
+  window.removeEventListener('mouseup', onScrubUp)
+}
+
 // CSV：同筛选一次性拉最近 2 万条（服务端分页上限），前端拼装下载
 async function exportCSV() {
   if (f.value.type === 'ipscan') return exportIpCSV()
@@ -1029,7 +1093,7 @@ async function exportCSV() {
     for (const r of recs) {
       rows.push([
         dayjs(r.ts_ms).format('YYYY-MM-DD HH:mm:ss'), typeLabel(r.type), probeNameOf(r.probe), r.target,
-        r.class === 'gw' ? '网关' : (r.class === 'public' ? '公网' : ''),
+        r.class === 'gw' ? '网关' : (r.class === 'public' ? '公网' : (r.class === 'gateway' ? '核心网关' : (r.class === 'anchor' ? '汇聚设备' : ''))),
         r.ok ? '成功' : '失败',
         r.type === 'speed' ? '' : (r.rtt_ms || ''),
         r.type === 'speed' ? (r.rtt_ms || '') : '',
@@ -1087,6 +1151,8 @@ onMounted(async () => {
 onUnmounted(() => {
   clearTimeout(viewTimer)
   cancelAnimationFrame(rafId)
+  window.removeEventListener('mousemove', onScrubMove)
+  window.removeEventListener('mouseup', onScrubUp)
   if (trendChart) { trendChart.destroy(); trendChart = null }
 })
 </script>

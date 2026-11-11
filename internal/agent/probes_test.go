@@ -118,3 +118,24 @@ func TestProbeRetryCanceled(t *testing.T) {
 		t.Fatalf("取消路径不应等待重试间隔: %v", elapsed)
 	}
 }
+
+// TestBurstLossPct 一轮 N 包的丢包率：全收=0、全丢=100、4/5=20、边界钳位
+func TestBurstLossPct(t *testing.T) {
+	cases := []struct {
+		sent, recv int
+		want       float64
+	}{
+		{5, 5, 0},
+		{5, 0, 100},
+		{5, 4, 20},
+		{5, 3, 40},
+		{0, 0, 100},  // 非法轮次按全丢处理
+		{5, 9, 0},    // recv 超过 sent 钳位
+		{5, -1, 100}, // 非法 recv 钳位
+	}
+	for _, c := range cases {
+		if got := burstLossPct(c.sent, c.recv); got != c.want {
+			t.Fatalf("burstLossPct(%d,%d)=%v，期望 %v", c.sent, c.recv, got, c.want)
+		}
+	}
+}

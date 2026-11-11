@@ -77,9 +77,10 @@ type SpeedVerdict struct {
 	FirstAvg  float64 // 首测均值（Confirmed/Resolved 时文案用）
 }
 
-// SpeedSched 测速调度器（并行模型）：每探针独立任务，同一时刻最多 MaxConcurrent 个在途。
-// 各探针走各自出口线路（防火墙按源 IP 策略路由），测速流量互不抢占，故并行安全；
-// 同轮到期探针一起开测（不做错峰），结果或超时后各自重排。
+// SpeedSched 测速调度器：每探针独立任务，同一时刻最多 MaxConcurrent 个在途。
+// 各探针走各自出口线路（防火墙按源 IP 策略路由），但多条宽带线路共享上行带宽——
+// 高并发测速会自争抢压低读数（2026-11-10 ABA 实测中位数 -13%，见 AGENTS.md），生产取 1（逐条串行）；
+// 结果或超时后各自重排。
 type SpeedSched struct {
 	store *Store
 	log   *log.Logger

@@ -34,7 +34,7 @@
     </ModalBox>
 
     <div class="nw-card mb-3">
-      <h6>操作审计日志（最近 100 条）</h6>
+      <h6>操作审计日志</h6>
       <table class="table nw-table table-sm table-fixed">
         <thead><tr><th style="width:14%">时间</th><th style="width:10%">用户</th><th>操作</th><th style="width:30%">结果</th></tr></thead>
         <tbody>
@@ -47,28 +47,52 @@
           <tr v-if="!audits.length"><td colspan="4" class="text-secondary small">暂无记录（变更操作会自动记录）</td></tr>
         </tbody>
       </table>
+      <div class="d-flex align-items-center flex-wrap gap-3 mt-2" v-if="total > 0">
+        <span class="small text-secondary">共 {{ total }} 条</span>
+        <select v-model.number="pageSize" class="form-select form-select-sm w-auto" @change="reloadFromFirstPage" title="每页显示条数">
+          <option :value="10">每页 10 条</option>
+          <option :value="20">每页 20 条</option>
+          <option :value="50">每页 50 条</option>
+        </select>
+        <div class="ms-auto d-flex align-items-center gap-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="page <= 1" @click="gotoPage(page - 1)">上一页</button>
+          <span class="small text-secondary">第 {{ page }} / {{ pageCount }} 页</span>
+          <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="page >= pageCount" @click="gotoPage(page + 1)">下一页</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '../../api'
 import ModalBox from '../../components/ModalBox.vue'
 import { fmtTime } from '../../utils'
 
 const users = ref([]), userMsg = ref(''), userOk = ref(false)
-const audits = ref([])
+const audits = ref([]), total = ref(0), page = ref(1), pageSize = ref(20)
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const nuModal = reactive({ show: false, username: '', password: '', role: 'viewer', err: '' })
 
 function openUser() { Object.assign(nuModal, { show: true, username: '', password: '', role: 'viewer', err: '' }) }
 
 const fmt = fmtTime
 
+async function loadAudits() {
+  const res = await api.get(`/api/admin/audit?limit=${pageSize.value}&offset=${(page.value - 1) * pageSize.value}`)
+  audits.value = res.rows
+  total.value = res.total
+  if (page.value > pageCount.value) { page.value = pageCount.value; return loadAudits() }
+}
+
+// 筛选（每页条数）变化：回第一页；翻页：保持重取
+function reloadFromFirstPage() { page.value = 1; loadAudits() }
+function gotoPage(p) { page.value = p; loadAudits() }
+
 async function load() {
-  ;[users.value, audits.value] = await Promise.all([
-    api.get('/api/admin/users'), api.get('/api/admin/audit?limit=100'),
-  ])
+  users.value = await api.get('/api/admin/users')
+  await loadAudits()
 }
 
 async function addUser() {
@@ -80,6 +104,8 @@ async function addUser() {
     nuModal.show = false
     userMsg.value = '已创建'; userOk.value = true
     users.value = await api.get('/api/admin/users')
+    page.value = 1
+    await loadAudits() // 建号动作本身已入审计，刷新可见
   } catch (e) { nuModal.err = e.message }
 }
 
@@ -88,6 +114,8 @@ async function delUser(u) {
   try {
     await api.del('/api/admin/users/' + u.id)
     users.value = await api.get('/api/admin/users')
+    page.value = 1
+    await loadAudits()
   } catch (e) { alert(e.message) }
 }
 

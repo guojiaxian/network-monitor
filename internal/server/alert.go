@@ -30,44 +30,82 @@ const ringHistory = 3 * time.Hour
 // 5 分钟丢包中位数可能早于 45s 判活窗口越阈值，不能把"刚刚开始的全断"先报成降质。
 const degradedRecentOK = 20 * time.Second
 
+// 降质判定与样本防抖固定值（监测说明直接引用，改这里即同步文档）
+const (
+	lossMinSamples      = 10               // 每目标参与 3 分钟中位数判定的最少轮次
+	lossMinuteMinRounds = 5                // 每目标参与单分钟 P 判定的最少轮次（一轮 5 包）
+	lossResolveRatio    = 0.7              // 降质收口迟滞：连续回落到阈值的 70% 才恢复
+	severeLossPct       = 50               // 短时严重丢包：单分钟 P ≥ 该值立即报
+	severeResolveRatio  = 0.7              // 短时严重丢包收口：回落到 70% 阈值
+	minuteGrace         = 15 * time.Second // 完整分钟判定宽限：等最后一轮样本（10s 周期+抖动+网络）到齐
+	clockSkewClamp      = 2 * time.Minute  // 探针样本快于服务器超过该值时钳位到服务器时间
+)
+
 // 告警类别
 const (
-	KindLineDown      = "line_down"       // P1 线路中断（网关正常、公网全部失败；多探针线路需全部报中断）
-	KindFloorDown     = "floor_down"      // P1 楼层中断（楼层网关不可达）
-	KindBlind         = "blind"           // P0 监控盲区（探针失联）
-	KindDegraded      = "degraded"        // P2 线路降质（丢包/时延超阈值）
-	KindSpeedLow      = "speed_low"       // P2 网速慢（一轮均值低于阈值，1 分钟后复测仍低才触发）
-	KindConflict      = "probe_conflict"  // P2 探针数据冲突（多探针线路中部分报中断）
-	KindMonitorDown   = "monitor_down"    // P2 内网服务不可达（中心内置监控）
-	KindProbeRes      = "probe_resource"  // P2 探针资源紧张（探针 VM 自身内存/磁盘 >90%）
-	KindIndustryDown  = "industry_down"   // P2 行业网不可达（中心对行业网 IP 仅 ICMP ping）
-	KindProbeTypeFail = "probe_type_fail" // P2 探测异常（探针某类 TCP/DNS/HTTP 全部目标连续失败 ≥1min；DNS 百分百失败 5 天无人发现的盲区补防）
+	KindLineDown        = "line_down"         // P1 线路中断（网关正常、公网全部失败；多探针线路需全部报中断）
+	KindFloorDown       = "floor_down"        // P1 楼层中断（楼层网关不可达）
+	KindBlind           = "blind"             // P0 监控盲区（探针失联）
+	KindDegraded        = "degraded"          // P2 线路降质（单分钟丢包下中位数连续超阈值）
+	KindLossSevere      = "loss_severe"       // P2 短时严重丢包（单分钟丢包下中位数 ≥50%）
+	KindSpeedLow        = "speed_low"         // P2 网速慢（一轮均值低于阈值，1 分钟后复测仍低才触发）
+	KindConflict        = "probe_conflict"    // P2 探针数据冲突（多探针线路中部分报中断）
+	KindMonitorDown     = "monitor_down"      // P2 内网服务不可达（中心内置监控）
+	KindProbeRes        = "probe_resource"    // P2 探针资源紧张（探针 VM 自身内存/磁盘 >90%）
+	KindIndustryDown    = "industry_down"     // P2 行业网不可达（中心对行业网 IP 仅 ICMP ping）
+	KindProbeTypeFail   = "probe_type_fail"   // P2 探测异常（探针某类 TCP/DNS/HTTP 全部目标连续失败 ≥1min；DNS 百分百失败 5 天无人发现的盲区补防）
+	KindFloorGWDown     = "floor_gw_down"     // P1 楼层核心/共同网关不可达（中心探测 floors.gateway）
+	KindFloorAnchorDown = "floor_anchor_down" // P1 楼层汇聚/AC/接入设备不可达（中心探测锚点管理 IP）
 )
 
 var kindSeverity = map[string]string{
-	KindBlind:         "P0",
-	KindLineDown:      "P1",
-	KindFloorDown:     "P1",
-	KindDegraded:      "P2",
-	KindSpeedLow:      "P2",
-	KindConflict:      "P2",
-	KindMonitorDown:   "P2",
-	KindProbeRes:      "P2",
-	KindIndustryDown:  "P2",
-	KindProbeTypeFail: "P2",
+	KindBlind:           "P0",
+	KindLineDown:        "P1",
+	KindFloorDown:       "P1",
+	KindDegraded:        "P2",
+	KindLossSevere:      "P2",
+	KindSpeedLow:        "P2",
+	KindConflict:        "P2",
+	KindMonitorDown:     "P2",
+	KindProbeRes:        "P2",
+	KindIndustryDown:    "P2",
+	KindProbeTypeFail:   "P2",
+	KindFloorGWDown:     "P1",
+	KindFloorAnchorDown: "P1",
 }
 
 var kindTitle = map[string]string{
-	KindBlind:         "监控盲区：探针失联",
-	KindLineDown:      "宽带线路中断",
-	KindFloorDown:     "楼层网络中断（网关不可达）",
-	KindDegraded:      "线路质量降质（丢包/时延偏高）",
-	KindSpeedLow:      "网速慢",
-	KindConflict:      "探针数据冲突（部分探针报线路中断）",
-	KindMonitorDown:   "内网服务不可达",
-	KindProbeRes:      "探针资源紧张（内存/磁盘使用率超 90%）",
-	KindIndustryDown:  "行业网不可达",
-	KindProbeTypeFail: "探测异常",
+	KindBlind:           "监控盲区：探针失联",
+	KindLineDown:        "宽带线路中断",
+	KindFloorDown:       "楼层网络中断（网关不可达）",
+	KindDegraded:        "线路质量降质（丢包/时延偏高）",
+	KindLossSevere:      "短时严重丢包",
+	KindSpeedLow:        "网速慢",
+	KindConflict:        "探针数据冲突（部分探针报线路中断）",
+	KindMonitorDown:     "内网服务不可达",
+	KindProbeRes:        "探针资源紧张（内存/磁盘使用率超 90%）",
+	KindIndustryDown:    "行业网不可达",
+	KindProbeTypeFail:   "探测异常",
+	KindFloorGWDown:     "楼层网关不可达",
+	KindFloorAnchorDown: "楼层汇聚设备不可达",
+}
+
+// kindResolvedTitle 恢复（✅ Up）邮件的消息标题——触发讲"发生了什么"，恢复讲"什么恢复了"。
+// 探测异常这类带「（DNS）」标注的告警，恢复标题自动保留原标注后缀（见 mail.go mailMsg）。
+var kindResolvedTitle = map[string]string{
+	KindBlind:           "探针恢复上线",
+	KindLineDown:        "宽带线路恢复",
+	KindFloorDown:       "楼层网络恢复",
+	KindDegraded:        "线路质量恢复",
+	KindLossSevere:      "丢包恢复",
+	KindSpeedLow:        "网速恢复",
+	KindConflict:        "探针数据恢复一致",
+	KindMonitorDown:     "内网服务恢复",
+	KindProbeRes:        "探针资源恢复",
+	KindIndustryDown:    "行业网恢复",
+	KindProbeTypeFail:   "探测恢复",
+	KindFloorGWDown:     "楼层网关恢复",
+	KindFloorAnchorDown: "楼层汇聚设备恢复",
 }
 
 // AlertMeta 告警关联元信息（渲染邮件用）
@@ -82,6 +120,7 @@ type AlertMeta struct {
 	ProbeID      string
 	ProbeDisplay string // 探针显示名称（名称或主机名）
 	StartsAt     time.Time
+	ResolvedAt   time.Time // 恢复时刻（仅恢复邮件；正文据此显示本次停机时长）
 	ExtraHTML    string
 }
 
@@ -92,11 +131,24 @@ type liveAlert struct {
 	firing time.Time
 }
 
-// pingRec 5 分钟滑动窗口内的公网 ping 结果
+// pingRec 5 分钟滑动窗口内的公网 ping 结果。
+// loss 为该轮丢包率 %（方案C：探针一轮 5 包，0~100；旧探针每轮 1 包=0/100）。
 type pingRec struct {
 	target string
 	ok     bool
 	ts     time.Time
+	loss   float64
+}
+
+// lossPct 单轮丢包率：新探针带实际值；旧探针/回填缺失时按"成功=0、失败=100"兜底。
+func (r pingRec) lossPct() float64 {
+	if r.loss > 0 {
+		return r.loss
+	}
+	if r.ok {
+		return 0
+	}
+	return 100
 }
 
 // probeAgg 单探针聚合状态
@@ -112,6 +164,10 @@ type probeAgg struct {
 	gwFailStreak int
 	// 公网 ping 滑动窗口
 	pingWin []pingRec
+	// P2 降质：按完整分钟逐分钟判定，记录已处理分钟与连续超标/连续回落计数
+	lastEvalMinute int64
+	degStreak      int
+	degOKStreak    int
 	// 最近各类探测结果（总览展示用）
 	lastTCP    *proto.Sample
 	lastDNS    *proto.Sample
@@ -156,18 +212,18 @@ type ProbeStatus struct {
 
 // MinStat 方格心跳图的单分钟汇总（1 格 = 1 分钟）：N=该分钟公网 ping 样本数
 // （各目标独立计时，样本级判定），F=其中失败样本数。前端状态判定：
-// N=0 不产出格子（灰=暂停探测）/ F=N 红（全部失败）/ M>降级阈值 黄（降级，见下）/
-// F>0 橙（有失败已恢复）/ 其余深绿（全部成功）。
+// N=0 不产出格子（灰=暂停探测）/ F=N 红（全部失败）/ P>降级阈值 紫（降级，见下）/
+// L>0 橙（有丢包但未达降级阈值）/ 其余深绿（无丢包且未降质）。
 // 语义与"只要有一个目标成功线路即联通"一致：目标级偶发失败不再显示为半成功。
 type MinStat struct {
 	T int64 `json:"t"` // 分钟起点（unix 秒，对齐 60s）
 	N int   `json:"n"`
 	F int   `json:"f"`
-	// M：该分钟按降质告警同款滚动窗口（LossWindowMin，见 minuteStats）计算的
-	// 各目标丢包率下中位数（%）。前端黄格判定 = M > loss_thresh（接口下发），
-	// 与 P2 降质告警（evaluate 的 lossStats）同 helper 同窗口同阈值——逐点一致：
-	// 单目标持续全断时中位数为 0，既不标黄也不告警。
-	M float64 `json:"m,omitempty"`
+	// L：该分钟各目标各轮丢包率的加权平均（%，方案C：一轮 N 包）。旧探针=失败样本占比。
+	L float64 `json:"l,omitempty"`
+	// P：该分钟各目标丢包率下中位数（%，每目标 ≥5 轮）。前端紫格判定 = P > loss_thresh，
+	// 与 P2 降质的单分钟判定同 helper 同阈值。单目标全断时中位数为 0，不标紫。
+	P float64 `json:"p,omitempty"`
 }
 
 // Engine 告警引擎：消费探测样本与心跳，按规则判定并触发邮件。
@@ -301,7 +357,7 @@ func (e *Engine) Ingest(ctx context.Context, agentID string, samples []proto.Sam
 	nowMs := time.Now().UnixMilli()
 	skewWarned := false
 	for i := range samples {
-		if samples[i].TS > nowMs+2*60*1000 {
+		if samples[i].TS > nowMs+clockSkewClamp.Milliseconds() {
 			if !skewWarned {
 				e.log.Printf("clock skew: probe=%s 样本时间快于服务器 >2min，已钳位（请为该探针 VM 配置 NTP）", agentID)
 				skewWarned = true
@@ -348,7 +404,7 @@ func (e *Engine) Ingest(ctx context.Context, agentID string, samples []proto.Sam
 				}
 				continue
 			}
-			agg.pingWin = append(agg.pingWin, pingRec{target: s.Target, ok: s.OK, ts: ts})
+			agg.pingWin = append(agg.pingWin, pingRec{target: s.Target, ok: s.OK, ts: ts, loss: s.LossPct})
 			if agg.lastPing == nil || ts.After(time.UnixMilli(agg.lastPing.TS)) {
 				cp := s
 				agg.lastPing = &cp
@@ -770,23 +826,51 @@ func (e *Engine) evalTypeFail(probeID string, agg *probeAgg, probeCfg *proto.Pro
 	}
 }
 
-// medianLoss 由"目标 → [总数, 失败数]"计算各目标丢包率的下中位数（%）。
-// 降质判定与心跳黄格的唯一口径：每目标 ≥10 样本才参与，且所有目标都参与
-// （门槛必须同时成立——只统计到部分目标时中位数会退化为单个目标的丢包率，
-// 探针刚启动时曾把"唯一凑满样本的坏目标"误判为整条线路降质）。样本不足返回 false，
-// 调用方维持原状（告警不触发/黄格不点亮），与"样本不足不下结论"的告警行为一致。
-func lossMedian(perTarget map[string][2]int) (float64, bool) {
-	var ratios []float64
+// lossAgg 单目标丢包统计：n=轮次/样本数，lost=各轮丢包率之和（%）。
+// 旧探针每轮 1 包（成功 0/失败 100），新旧口径加权后语义一致。
+type lossAgg struct {
+	n    int
+	lost float64
+}
+
+// lossMedian 由"目标 → 丢包统计"计算各目标平均丢包率的下中位数（%）。
+// 3 分钟窗口/状态徽章口径：每目标 ≥lossMinSamples 轮才参与，且所有目标都参与
+// （门槛必须同时成立——只统计到部分目标时中位数会退化为单个目标的丢包率）。
+func lossMedian(perTarget map[string]lossAgg) (float64, bool) {
+	return lossMedianN(perTarget, lossMinSamples)
+}
+
+// lossMedianN 同 lossMedian，但允许指定每目标的最少轮次（单分钟 P 用 5 轮）。
+func lossMedianN(perTarget map[string]lossAgg, minN int) (float64, bool) {
+	ratios := make([]float64, 0, len(perTarget))
 	for _, p := range perTarget {
-		if p[0] >= 10 {
-			ratios = append(ratios, float64(p[1])*100/float64(p[0]))
+		if p.n < minN {
+			return 0, false
 		}
+		ratios = append(ratios, p.lost/float64(p.n))
 	}
 	if len(ratios) == 0 || len(ratios) != len(perTarget) {
 		return 0, false
 	}
 	sort.Float64s(ratios)
 	return ratios[(len(ratios)-1)/2], true
+}
+
+// minuteLossAt 计算指定分钟（unix 秒，对齐 60s）的单分钟丢包下中位数 P。
+// 每目标至少 lossMinuteMinRounds 轮；样本不足返回 false（该分钟不下结论）。
+func (agg *probeAgg) minuteLossAt(minuteStart int64) (float64, bool) {
+	perTarget := map[string]lossAgg{}
+	for _, r := range agg.pingWin {
+		ts := r.ts.Unix()
+		if ts < minuteStart || ts >= minuteStart+60 {
+			continue
+		}
+		p := perTarget[r.target]
+		p.n++
+		p.lost += r.lossPct()
+		perTarget[r.target] = p
+	}
+	return lossMedianN(perTarget, lossMinuteMinRounds)
 }
 
 // anyOKWithin 最近 win 内是否有任一成功样本（ICMP 或 TCP/DNS/HTTP）。
@@ -800,16 +884,14 @@ func (agg *probeAgg) anyOKWithin(now time.Time, win time.Duration) bool {
 }
 
 func (agg *probeAgg) lossStats(now time.Time, win time.Duration) (anyOK45 bool, medianLoss float64, enough bool) {
-	perTarget := map[string][2]int{} // target → [总数, 失败数]
+	perTarget := map[string]lossAgg{} // target → 轮次/丢包率之和
 	for _, r := range agg.pingWin {
 		if now.Sub(r.ts) > win {
 			continue
 		}
 		p := perTarget[r.target]
-		p[0]++
-		if !r.ok {
-			p[1]++
-		}
+		p.n++
+		p.lost += r.lossPct()
 		perTarget[r.target] = p
 		if r.ok && now.Sub(r.ts) < aliveWindow {
 			anyOK45 = true
@@ -848,7 +930,7 @@ func (e *Engine) evaluate() {
 		lm, known := meta[probeID]
 		if !known {
 			// 探针已在后台删除：清状态、收口其活动告警
-			for _, kind := range []string{KindBlind, KindLineDown, KindFloorDown, KindDegraded, KindSpeedLow} {
+			for _, kind := range []string{KindBlind, KindLineDown, KindFloorDown, KindDegraded, KindLossSevere, KindSpeedLow} {
 				e.resolveLocked(kind+":"+probeID, "探针已删除")
 			}
 			for _, typ := range []string{"tcp", "dns", "http"} {
@@ -967,30 +1049,70 @@ func (e *Engine) evaluate() {
 			}
 		}
 
-		// P2 线路降质：窗口内各目标丢包率下中位数超阈值（线路中断时不叠加）
-		winMin := time.Duration(als.LossWindowMin) * time.Minute
-		_, medianLoss, enough := agg.lossStats(now, winMin)
-		if enough {
+		// P2 降质：按“已结束的分钟”逐分钟判定。
+		// 常规：连续 N 分钟 P>阈值（N=LossWindowMin，默认 3）；
+		// 短时严重：单分钟 P≥50% 立即报。P=该分钟各目标丢包率下中位数（每目标 ≥5 轮）。
+		n := als.LossWindowMin
+		if n < 1 {
+			n = 3
+		}
+		winMin := time.Duration(n) * time.Minute
+		// 宽限 15s 再判定上一分钟：探针 10s 一轮，分钟边界最后一轮可能还在路上；
+		// 过早判定会看到某目标 <5 轮而 enough=false，导致连续计数被清零、告警无法收口。
+		completed := now.Add(-minuteGrace).Truncate(time.Minute).Add(-time.Minute).Unix()
+		if completed > agg.lastEvalMinute {
+			agg.lastEvalMinute = completed
 			fp := KindDegraded + ":" + probeID
-			active := e.live[fp] != nil
-			// 中断进行中或刚收口一个窗口内：窗口样本被中断污染，不判定降质。
-			// !pubOK45 兜住"同一轮评估"：line_down 在本轮末尾才汇总进 e.live，
-			// 45s 内零成功时不再先发一条 P2 降质（全断已由 P1 表达）。
+			fpS := KindLossSevere + ":" + probeID
 			suppressed := e.degradedSuppressed(pubOK45, lm, probeID, now, winMin)
 			if suppressed {
-				if active {
+				if e.live[fp] != nil {
 					e.resolveLocked(fp, "线路中断（或刚恢复），降质并入中断事件")
 				}
-			} else if !active && agg.anyOKWithin(now, degradedRecentOK) && medianLoss > als.LossPctThresh {
-				e.fireLocked(fp, AlertMeta{
-					Kind: KindDegraded, Severity: kindSeverity[KindDegraded],
-					Title: kindTitle[KindDegraded], ProbeID: probeID,
-					LineName: lm.LineName, Floor: lm.Floor, PublicIP: lm.PublicIP, CIDR: lm.CIDR,
-					StartsAt:  now,
-					ExtraHTML: itoa(als.LossWindowMin) + " 分钟窗口目标丢包率中位数 " + ftoa(medianLoss) + "%（阈值 " + ftoa(als.LossPctThresh) + "%）",
-				}, probeID, lm)
-			} else if active && medianLoss <= als.LossPctThresh*0.7 {
-				e.resolveLocked(fp, "丢包率回落至 "+ftoa(medianLoss)+"%")
+				if e.live[fpS] != nil {
+					e.resolveLocked(fpS, "线路中断（或刚恢复），短时严重丢包并入中断事件")
+				}
+				agg.degStreak, agg.degOKStreak = 0, 0
+			} else if p, enough := agg.minuteLossAt(completed); enough {
+				if p > als.LossPctThresh {
+					agg.degStreak++
+					agg.degOKStreak = 0
+				} else {
+					agg.degStreak = 0
+					if p <= als.LossPctThresh*lossResolveRatio {
+						agg.degOKStreak++
+					} else {
+						agg.degOKStreak = 0
+					}
+				}
+				at := time.Unix(completed, 0)
+				if agg.degStreak >= n && e.live[fp] == nil {
+					e.fireLocked(fp, AlertMeta{
+						Kind: KindDegraded, Severity: kindSeverity[KindDegraded],
+						Title: kindTitle[KindDegraded], ProbeID: probeID,
+						LineName: lm.LineName, Floor: lm.Floor, PublicIP: lm.PublicIP, CIDR: lm.CIDR,
+						StartsAt:  at,
+						ExtraHTML: fmt.Sprintf("连续 %d 分钟单分钟丢包率下中位数 >%g%%（最近 %g%%）", n, als.LossPctThresh, p),
+					}, probeID, lm)
+				}
+				if e.live[fp] != nil && agg.degOKStreak >= n {
+					e.resolveLocked(fp, "连续 "+itoa(n)+" 分钟回落至 "+ftoa(p)+"%")
+				}
+				// 短时严重：单分钟 ≥50%；常规降质已在告警中时不重复报
+				if p >= severeLossPct && e.live[fp] == nil && e.live[fpS] == nil {
+					e.fireLocked(fpS, AlertMeta{
+						Kind: KindLossSevere, Severity: kindSeverity[KindLossSevere],
+						Title: kindTitle[KindLossSevere], ProbeID: probeID,
+						LineName: lm.LineName, Floor: lm.Floor, PublicIP: lm.PublicIP, CIDR: lm.CIDR,
+						StartsAt:  at,
+						ExtraHTML: fmt.Sprintf("单分钟丢包率下中位数 %g%%（严重阈值 %d%%）", p, severeLossPct),
+					}, probeID, lm)
+				} else if e.live[fpS] != nil && p <= severeLossPct*severeResolveRatio {
+					e.resolveLocked(fpS, "短时严重丢包回落至 "+ftoa(p)+"%")
+				}
+			} else {
+				// 该分钟样本不足：不下结论，清零连续计数
+				agg.degStreak, agg.degOKStreak = 0, 0
 			}
 		}
 	}
@@ -1165,30 +1287,30 @@ func (e *Engine) resolveLocked(fp, reason string) {
 		}
 	}
 	la.meta.ExtraHTML = reason
+	la.meta.ResolvedAt = time.Now()
 	e.log.Printf("RESOLVED [%s] %s", la.meta.Kind, la.meta.Title)
 	e.sendMail(la.meta, false)
 }
 
 // sendMail 发送告警/恢复通知：SMTP 邮件 + 钉钉/企业微信 webhook（后台可配）。
+// 邮件格式对齐 Uptime Kuma（[对象] [🔴 Down/✅ Up] 消息）；默认只报 P0/P1，
+// P2 邮件需在告警设置页开启 mail_send_p2（IM 渠道仍按自身开关推送）。
 func (e *Engine) sendMail(meta AlertMeta, firing bool) {
 	// 日志外发：告警触发/恢复转发审计服务器（sendMail 是全部 6 条 fire/resolve 路径的
 	// 收敛点；静默告警在 fireLocked 更早处被拦，天然不外发——跟随静默语义）
 	if e.shipper != nil {
 		e.shipper.Ship(alertLogEvent(meta, firing))
 	}
+	subject := mailSubject(meta, firing)
 	var smtpCfg SMTPSettings
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	subject := "[NetWatch] "
-	if firing {
-		subject += "【" + meta.Severity + "告警】"
-	} else {
-		subject += "【已恢复】"
-	}
-	subject += meta.Title // meta.Title 已含线路名（decorateTitle）
-
 	if err := e.store.GetSetting(ctx, "smtp", &smtpCfg); err == nil && smtpCfg.Valid() {
 		als, aerr := e.alertSettings(ctx)
+		if aerr == nil && !mailShouldSend(meta.Severity, als.MailSendP2) {
+			e.sendWebhooks(meta, firing, subject)
+			return
+		}
 		// 收件组：默认组 → 按级别覆盖
 		to := smtpCfg.To
 		if aerr == nil && len(als.NotifyTo) > 0 {
@@ -1208,11 +1330,11 @@ func (e *Engine) sendMail(meta AlertMeta, firing bool) {
 		}
 		smtpCfg.To = to
 		go func() {
-			bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer bcancel()
-			_ = bctx
 			if err := SendMail(smtpCfg, subject, alertEmailHTML(&e.cfg, meta, firing, meta.ExtraHTML)); err != nil {
 				e.log.Printf("send mail: %v", err)
+			} else {
+				// 成功留痕：既是邮件外发审计线索，也用于核对 P2 抑制（P2 关闭时此行不出现）
+				e.log.Printf("alert mail sent [%s] -> %s: %s", meta.Severity, strings.Join(to, ","), subject)
 			}
 		}()
 	}
@@ -1258,23 +1380,15 @@ func decorateTitle(meta AlertMeta, lm LineMeta) string {
 	return name + "：" + meta.Title
 }
 
-// minuteStats 把 pingWin 样本按分钟聚合成方格心跳图数据（升序，最多 60 分钟）。
+// minuteStats 把 pingWin 样本按分钟聚合成方格心跳图数据（升序）。
 // 各目标独立计时（探针侧每目标独立 ticker），样本级判定即可满足
 // "全部目标失败才算失败"的分钟语义，无需重构探测轮次。
-// winMin：降质统计窗口（分钟，取自告警设置 LossWindowMin）。每个分钟点额外计算
-// M = 以该分钟为终点、向前 winMin 分钟滚动窗口的各目标丢包率下中位数
-// （lossMedian 同 helper）——即"告警引擎在该时刻评估会得到的丢包中位数"，
-// 前端黄格与 P2 降质告警逐点一致。
-func (agg *probeAgg) minuteStats(winMin int) []MinStat {
-	if winMin < 1 {
-		winMin = 5
-	}
-	if winMin > 60 { // pingWin 仅保留 65 分钟，滚动窗口以此为限
-		winMin = 60
-	}
+// 每分钟额外计算 P = 该分钟各目标丢包率下中位数（每目标 ≥5 轮），
+// 前端紫格与 P2 降质的单分钟判定逐点一致；不再做跨分钟滚动。
+func (agg *probeAgg) minuteStats() []MinStat {
 	type acc struct{ n, f int }
 	byMin := map[int64]*acc{}
-	byMinTarget := map[int64]map[string][2]int{} // 分钟 → 目标 → [总数, 失败数]
+	byMinTarget := map[int64]map[string]lossAgg{} // 分钟 → 目标 → 轮次/丢包率之和
 	for _, r := range agg.pingWin {
 		m := r.ts.Unix() / 60 * 60
 		a := byMin[m]
@@ -1288,14 +1402,12 @@ func (agg *probeAgg) minuteStats(winMin int) []MinStat {
 		}
 		pt := byMinTarget[m]
 		if pt == nil {
-			pt = map[string][2]int{}
+			pt = map[string]lossAgg{}
 			byMinTarget[m] = pt
 		}
 		p := pt[r.target]
-		p[0]++
-		if !r.ok {
-			p[1]++
-		}
+		p.n++
+		p.lost += r.lossPct()
 		pt[r.target] = p
 	}
 	if len(byMin) == 0 {
@@ -1303,29 +1415,23 @@ func (agg *probeAgg) minuteStats(winMin int) []MinStat {
 	}
 	out := make([]MinStat, 0, len(byMin))
 	for m, a := range byMin {
-		out = append(out, MinStat{T: m, N: a.n, F: a.f})
+		ms := MinStat{T: m, N: a.n, F: a.f}
+		// L = 该分钟所有目标所有轮的"轮丢包率"加权平均（每轮包数相同，按轮次权重等价）
+		var tn int
+		var tl float64
+		for _, c := range byMinTarget[m] {
+			tn += c.n
+			tl += c.lost
+		}
+		if tn > 0 {
+			ms.L = tl / float64(tn)
+		}
+		if v, ok := lossMedianN(byMinTarget[m], lossMinuteMinRounds); ok {
+			ms.P = v
+		}
+		out = append(out, ms)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T < out[j].T })
-	// 滚动窗口下中位数：窗口 = [m-(winMin-1)分钟, m+1分钟)，与告警 evaluate 的
-	// lossStats(now, LossWindowMin) 同 helper 同口径
-	lo := int64(winMin-1) * 60
-	for i := range out {
-		m := out[i].T
-		pt := map[string][2]int{}
-		for mm, counts := range byMinTarget {
-			if mm >= m-lo && mm < m+60 {
-				for t, c := range counts {
-					p := pt[t]
-					p[0] += c[0]
-					p[1] += c[1]
-					pt[t] = p
-				}
-			}
-		}
-		if v, ok := lossMedian(pt); ok {
-			out[i].M = v
-		}
-	}
 	// 不在引擎层裁剪：内存环保留 3h（180 桶），由接口层按 minutes 参数裁剪
 	// （状态卡/总览/大屏 60，详情页 180），避免详情页只能拿到 60 桶。
 	return out
@@ -1347,18 +1453,22 @@ func (e *Engine) Snapshot() map[string]ProbeStatus {
 		}
 		// 方格心跳图：近 3 小时逐分钟 ping 汇总（按时间正序，稀疏——无样本的分钟不产出）；
 		// 接口层按 minutes 参数裁剪（状态卡/总览/大屏默认 60，详情页 180）
-		st.Minutes = agg.minuteStats(als.LossWindowMin)
+		st.Minutes = agg.minuteStats()
 		switch {
 		case agg.everSeen && now.Sub(agg.lastSeen) > 60*time.Second:
 			st.Status = "blind"
 		case agg.gwEver && now.Sub(agg.gwLast) < 90*time.Second && agg.gwFailStreak >= 3:
 			st.Status = "floor_down"
 		case agg.gwEver && agg.gwOK && now.Sub(agg.gwLast) < 90*time.Second:
-			ok45, medianLoss, enough := agg.lossStats(now, time.Duration(als.LossWindowMin)*time.Minute)
+			n := als.LossWindowMin
+			if n < 1 {
+				n = 3
+			}
+			ok45, medianLoss, enough := agg.lossStats(now, time.Duration(n)*time.Minute)
 			switch {
 			case enough && !ok45:
 				st.Status = "down"
-			case enough && medianLoss > als.LossPctThresh:
+			case e.live[KindDegraded+":"+id] != nil || e.live[KindLossSevere+":"+id] != nil:
 				st.Status = "degraded"
 			default:
 				st.Status = "online"
@@ -1468,6 +1578,7 @@ func (e *Engine) ResolveMonitor(fp string, it MonitorItem, reason string) {
 		}
 	}
 	la.meta.ExtraHTML = reason
+	la.meta.ResolvedAt = time.Now()
 	e.log.Printf("RESOLVED [monitor_down] %s", it.Name)
 	e.sendMail(la.meta, false)
 }
@@ -1539,8 +1650,88 @@ func (e *Engine) ResolveIndustry(fp string, it IndustryItem, reason string) {
 		}
 	}
 	la.meta.ExtraHTML = reason
+	la.meta.ResolvedAt = time.Now()
 	e.log.Printf("RESOLVED [industry_down] %s", it.Name)
 	e.sendMail(la.meta, false)
+}
+
+// FireFloorNet 楼层网关/汇聚设备监测触发告警（FloorNetRunner 调用）。
+// 每个目标 IP 一条独立告警，标题已带楼层段与设备名；相同 IP 共享设备只报一条。
+func (e *Engine) FireFloorNet(fp string, t FloorNetTarget, detail string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, ok := e.live[fp]; ok {
+		return
+	}
+	kind := KindFloorGWDown
+	if t.Class == floorNetClassAnchor {
+		kind = KindFloorAnchorDown
+	}
+	meta := AlertMeta{
+		Kind: kind, Severity: kindSeverity[kind],
+		Title: t.Title, ProbeID: "center", ProbeDisplay: "中心服务器",
+		Floor: t.Floors, CIDR: t.CIDR,
+		StartsAt: time.Now(), ExtraHTML: detail,
+	}
+	if e.silenced(0) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	row := &AlertRow{Fingerprint: fp, Severity: meta.Severity, Kind: meta.Kind,
+		Title: meta.Title, ProbeID: "center", StartsAt: meta.StartsAt}
+	id, err := e.store.CreateAlert(ctx, row)
+	if err != nil {
+		e.log.Printf("persist alert %s: %v", fp, err)
+	}
+	e.live[fp] = &liveAlert{rowID: id, meta: meta, firing: time.Now()}
+	e.log.Printf("ALERT %s [%s] %s (%s)", meta.Severity, meta.Kind, meta.Title, t.Target)
+	e.sendMail(meta, true)
+}
+
+// ResolveFloorNet 楼层网关/汇聚设备恢复。
+func (e *Engine) ResolveFloorNet(fp, reason string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	la, ok := e.live[fp]
+	if !ok {
+		return
+	}
+	delete(e.live, fp)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if la.rowID > 0 {
+		if err := e.store.ResolveAlert(ctx, la.rowID); err != nil {
+			e.log.Printf("resolve alert %s: %v", fp, err)
+		}
+	}
+	la.meta.ExtraHTML = reason
+	la.meta.ResolvedAt = time.Now()
+	e.log.Printf("RESOLVED [%s] %s", la.meta.Kind, la.meta.Title)
+	e.sendMail(la.meta, false)
+}
+
+// CleanFloorNet 楼层/锚点配置变更后：清理已删除目标的进行中告警。
+func (e *Engine) CleanFloorNet(live map[string]bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for fp, la := range e.live {
+		if la.meta.Kind != KindFloorGWDown && la.meta.Kind != KindFloorAnchorDown {
+			continue
+		}
+		if live[fp] {
+			continue
+		}
+		delete(e.live, fp)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if la.rowID > 0 {
+			if err := e.store.ResolveAlert(ctx, la.rowID); err != nil {
+				e.log.Printf("resolve alert %s: %v", fp, err)
+			}
+		}
+		cancel()
+		e.log.Printf("RESOLVED [%s] %s（目标已删除）", la.meta.Kind, la.meta.Title)
+	}
 }
 
 // CleanIndustries 行业网监测配置变更后：清理已删除目标的进行中告警与状态

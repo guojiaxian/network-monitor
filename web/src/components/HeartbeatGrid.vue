@@ -9,8 +9,8 @@
       <span v-for="(c, i) in bars" :key="i" class="hbg-tick"><b>{{ tickLabel(i) }}</b></span>
     </div>
     <div v-if="legend" class="d-flex flex-wrap gap-3 mt-2 small text-secondary">
-      <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-ok"></i>全部成功</span>
-      <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-partial"></i>存在失败已恢复</span>
+      <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-ok"></i>无丢包</span>
+      <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-partial"></i>有丢包（未超阈值）</span>
       <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-degraded"></i>降级（丢包超阈值）</span>
       <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-fail"></i>全部失败</span>
       <span class="d-inline-flex align-items-center gap-1"><i class="hbg-dot hbg-nodata"></i>暂停探测</span>
@@ -21,15 +21,13 @@
 <script setup>
 // 方格心跳图（全站统一规则）：1 格 = 1 分钟的探测汇总，正方形格子单行排列；
 // 格子数按容器宽度自适应，放不下时最左边的格子移出（滑动窗口，右端最新）。
-// 状态语义（用户定义 2026-11-07；degraded 为 2026-11-07 晚新增）：
-//   深绿 ok      窗口内所有探测全部成功
-//   橙 partial 窗口内至少一次未连通但后续恢复（不再表示"部分目标成功"）
-//   黄 degraded 降级：该分钟按降质告警同款滚动窗口的各目标丢包率下中位数超阈值
-//              （与 P2 告警同口径——单目标全断不标黄也不告警）
-//   红   fail    窗口内所有探测均失败
+// 状态语义（2026-11-09 方案C）：
+//   深绿 ok      该分钟无丢包且未降质
+//   橙   partial 该分钟有丢包，但该分钟各目标丢包率下中位数未超阈值
+//   紫   degraded 该分钟各目标丢包率下中位数超阈值（与 P2 单分钟判定同口径；单目标全断不标紫）
+//   红   fail    该分钟所有轮次 5 包全丢
 //   灰   nodata  该分钟无任何探测（暂停探测/盲区）
-// "一次探测失败" = 该次所有目标都失败（只要有一个目标成功即视为联通），
-// 由数据方按分钟聚合判定（探针引擎逐分钟样本计数 / VM avg_over_time 逐分钟均值）。
+// 一次探测 = 一轮 5 个 ICMP 包；只要收到 1 包即视为"通"，丢包率单独统计。
 // axis（仅详情页开启）：方格下方时间轴刻度 + 悬停浮出"时间区间 · 状态"提示。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
@@ -43,7 +41,7 @@ const props = defineProps({
   axis: { type: Boolean, default: false },   // 时间轴 + 悬停浮层（详情页开启）
 })
 
-const LABEL = { ok: '全部成功', partial: '存在失败已恢复', degraded: '降级（丢包超阈值）', fail: '全部失败', nodata: '暂停探测' }
+const LABEL = { ok: '无丢包', partial: '有丢包（未超阈值）', degraded: '降级（丢包超阈值）', fail: '全部失败', nodata: '暂停探测' }
 
 const box = ref(null)
 const cap = ref(40)
@@ -62,16 +60,20 @@ onBeforeUnmount(() => ro && ro.disconnect())
 
 const index = computed(() => {
   const m = new Map()
-  for (const c of props.cells) m.set(c.t, c.s)
+  for (const c of props.cells) m.set(c.t, c)
   return m
 })
 const bars = computed(() => {
   const endMin = Math.floor((props.end || Date.now() / 1000) / 60)
   const out = []
   for (let t = (endMin - cap.value + 1) * 60; t <= endMin * 60; t += 60) {
-    const s = index.value.get(t) || 'nodata'
+    const c = index.value.get(t) || { s: 'nodata' }
+    const s = c.s
     const st = dayjs(t * 1000)
-    out.push({ t, s, title: `${st.format('HH:mm')}–${st.add(1, 'minute').format('HH:mm')} · ${LABEL[s]}` })
+    let extra = ''
+    if (s === 'partial' && Number(c.loss || 0) > 0) extra = ` · 丢包 ${Number(c.loss).toFixed(1)}%`
+    else if (s === 'degraded') extra = ` · 丢包中位数 ${Number(c.p || 0).toFixed(1)}%`
+    out.push({ t, s, title: `${st.format('HH:mm')}–${st.add(1, 'minute').format('HH:mm')} · ${LABEL[s]}${extra}` })
   }
   return out
 })

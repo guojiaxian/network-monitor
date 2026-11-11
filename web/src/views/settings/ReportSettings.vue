@@ -2,29 +2,35 @@
   <div>
     <div class="nw-card mb-3">
       <h6>报表推送计划</h6>
-      <div class="row g-2 align-items-end">
-        <div class="col-md-3 d-flex gap-3">
-          <div class="form-check"><input id="rp1" v-model="rp.daily_enabled" type="checkbox" class="form-check-input" /><label for="rp1" class="form-check-label">每日日报</label></div>
-          <div class="form-check"><input id="rp2" v-model="rp.weekly_enabled" type="checkbox" class="form-check-input" /><label for="rp2" class="form-check-label">每周周报</label></div>
-        </div>
-        <div class="col-md-2"><label class="form-label small mb-1">日报时间</label><input v-model="rp.daily_at" class="form-control form-control-sm" placeholder="08:00" /></div>
-        <div class="col-md-2">
-          <label class="form-label small mb-1">周报星期</label>
-          <select v-model.number="rp.weekly_day" class="form-select form-select-sm">
+      <p class="text-secondary small mb-2">生成与发送可分开设置：到「生成时间」只统计并生成报表（报表页可见），到「发送时间」再把已生成的报表邮件推送出去；发送时间留空表示生成后立即发送。</p>
+      <div class="d-flex flex-wrap align-items-end gap-3">
+        <div class="form-check mb-0"><input id="rp1" v-model="rp.daily_enabled" type="checkbox" class="form-check-input" /><label for="rp1" class="form-check-label text-nowrap">每日日报</label></div>
+        <div><label class="form-label small mb-1 text-nowrap">生成时间</label><input v-model="rp.daily_at" type="time" class="form-control form-control-sm nw-time-sm" /></div>
+        <div><label class="form-label small mb-1 text-nowrap">发送时间 <span class="text-secondary">（留空=立即发送）</span></label><input v-model="rp.daily_send_at" type="time" class="form-control form-control-sm nw-time-sm" title="留空表示生成后立即发送" /></div>
+        <div class="ms-auto"><button class="btn btn-sm btn-primary" @click="saveRP">保存</button></div>
+      </div>
+      <hr class="my-3" />
+      <div class="d-flex flex-wrap align-items-end gap-3">
+        <div class="form-check mb-0"><input id="rp2" v-model="rp.weekly_enabled" type="checkbox" class="form-check-input" /><label for="rp2" class="form-check-label text-nowrap">每周周报</label></div>
+        <div>
+          <label class="form-label small mb-1 text-nowrap">周报星期</label>
+          <select v-model.number="rp.weekly_day" class="form-select form-select-sm nw-time-sm">
             <option :value="1">周一</option><option :value="2">周二</option><option :value="3">周三</option>
             <option :value="4">周四</option><option :value="5">周五</option><option :value="6">周六</option><option :value="0">周日</option>
           </select>
         </div>
-        <div class="col-md-2"><label class="form-label small mb-1">周报时间</label><input v-model="rp.weekly_at" class="form-control form-control-sm" placeholder="08:30" /></div>
-        <div class="col-md-3 text-end"><button class="btn btn-sm btn-primary" @click="saveRP">保存</button></div>
+        <div><label class="form-label small mb-1 text-nowrap">生成时间</label><input v-model="rp.weekly_at" type="time" class="form-control form-control-sm nw-time-sm" /></div>
+        <div><label class="form-label small mb-1 text-nowrap">发送时间 <span class="text-secondary">（留空=立即发送）</span></label><input v-model="rp.weekly_send_at" type="time" class="form-control form-control-sm nw-time-sm" title="留空表示生成后立即发送" /></div>
       </div>
-      <div class="row g-2 align-items-end mt-1">
-        <div class="col-md-3"><div class="form-check"><input id="rp3" v-model="rp.monthly_enabled" type="checkbox" class="form-check-input" /><label for="rp3" class="form-check-label">每月月报（出上一自然月）</label></div></div>
-        <div class="col-md-2"><label class="form-label small mb-1">月报日期（几号）</label><input v-model.number="rp.monthly_day" type="number" min="1" max="28" class="form-control form-control-sm" placeholder="1" /></div>
-        <div class="col-md-2"><label class="form-label small mb-1">月报时间</label><input v-model="rp.monthly_at" class="form-control form-control-sm" placeholder="08:00" /></div>
-        <div class="col-md-4"><label class="form-label small mb-1">单位名称（报告封面与正文用）</label><input v-model="rp.org_name" class="form-control form-control-sm" placeholder="如：××单位信息中心" /></div>
+      <hr class="my-3" />
+      <div class="d-flex flex-wrap align-items-end gap-3">
+        <div class="form-check mb-0"><input id="rp3" v-model="rp.monthly_enabled" type="checkbox" class="form-check-input" /><label for="rp3" class="form-check-label text-nowrap">每月月报</label></div>
+        <div><label class="form-label small mb-1 text-nowrap">月报日期（几号）</label><input v-model.number="rp.monthly_day" type="number" min="1" max="28" class="form-control form-control-sm nw-time-sm" placeholder="1" /></div>
+        <div><label class="form-label small mb-1 text-nowrap">生成时间</label><input v-model="rp.monthly_at" type="time" class="form-control form-control-sm nw-time-sm" /></div>
+        <div><label class="form-label small mb-1 text-nowrap">发送时间 <span class="text-secondary">（留空=立即发送）</span></label><input v-model="rp.monthly_send_at" type="time" class="form-control form-control-sm nw-time-sm" title="留空表示生成后立即发送" /></div>
+        <div><label class="form-label small mb-1 text-nowrap">单位名称（报告封面与正文用）</label><input v-model="rp.org_name" class="form-control form-control-sm" style="width:220px" placeholder="如：××单位信息中心" /></div>
       </div>
-      <p class="text-secondary small mb-0 mt-2">日报/周报/月报按计划生成（统计口径为自然日/自然周/自然月）并推送到通知渠道收件组；历史报表可在 <router-link to="/reports">报表</router-link> 页查看与导出。</p>
+      <p class="text-secondary small mb-0 mt-2">统计口径为自然日/自然周/自然月（出上一周期）；到生成时间只生成不发送，到发送时间推送最新一份未发送的报表（发送失败 30 秒后自动重试，已发送不重复推送）。历史报表可在 <router-link to="/reports">报表</router-link> 页查看与导出。</p>
       <div v-if="rpMsg" class="small mt-2" :class="rpOk ? 'text-success' : 'text-danger'">{{ rpMsg }}</div>
     </div>
 

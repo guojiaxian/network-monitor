@@ -56,7 +56,14 @@ func (a *Agent) probeLoops(ctx context.Context) {
 		for _, t := range cfg.ICMPTargets {
 			t := t
 			launch(pingInterval(cfg), func(c context.Context) *proto.Sample {
-				return a.doPing(c, t, false, timeout, retries, retryPause)
+				// 公网目标每轮 5 包聚合为一条样本：OK=收到任意包，LossPct=本轮丢包率。
+				// 不逐包重试（重试会掩盖真实丢包）；网关探测仍走 doPing 的单包+重试。
+				rtt, ok, loss, err := pingBurst(c, t, a.autoSource(), timeout, PingBurstCount)
+				s := &proto.Sample{Type: proto.TypePing, Target: t, TS: nowMs(), OK: ok, RTTms: rtt, LossPct: loss}
+				if err != nil {
+					s.Extra = map[string]float64{"err": 1}
+				}
+				return s
 			})
 		}
 		for _, t := range cfg.TCPTargets {

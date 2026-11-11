@@ -17,7 +17,7 @@ func TestLossStatsSingleBadTarget(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		ts := now.Add(-time.Duration(20-i) * time.Second)
 		agg.pingWin = append(agg.pingWin,
-			pingRec{"a", true, ts}, pingRec{"b", true, ts}, pingRec{"c", false, ts})
+			pingRec{"a", true, ts, 0}, pingRec{"b", true, ts, 0}, pingRec{"c", false, ts, 0})
 	}
 	ok45, med, enough := agg.lossStats(now, 5*time.Minute)
 	if !ok45 {
@@ -39,7 +39,7 @@ func TestLossStatsMajorityDegraded(t *testing.T) {
 		ts := now.Add(-time.Duration(20-i) * time.Second)
 		ok := i%2 == 0
 		agg.pingWin = append(agg.pingWin,
-			pingRec{"a", ok, ts}, pingRec{"b", ok, ts}, pingRec{"c", true, ts})
+			pingRec{"a", ok, ts, 0}, pingRec{"b", ok, ts, 0}, pingRec{"c", true, ts, 0})
 	}
 	_, med, _ := agg.lossStats(now, 5*time.Minute)
 	if med <= 10 {
@@ -54,7 +54,7 @@ func TestLossStatsAllDown(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		ts := now.Add(-time.Duration(20-i) * time.Second)
 		agg.pingWin = append(agg.pingWin,
-			pingRec{"a", false, ts}, pingRec{"b", false, ts}, pingRec{"c", false, ts})
+			pingRec{"a", false, ts, 0}, pingRec{"b", false, ts, 0}, pingRec{"c", false, ts, 0})
 	}
 	ok45, med, enough := agg.lossStats(now, 5*time.Minute)
 	if ok45 {
@@ -71,7 +71,7 @@ func TestLossStatsNotEnoughSamples(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 5; i++ {
 		ts := now.Add(-time.Duration(5-i) * time.Second)
-		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts})
+		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts, 0})
 	}
 	_, _, enough := agg.lossStats(now, 5*time.Minute)
 	if enough {
@@ -85,7 +85,7 @@ func TestLossStatsWindowPrune(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 30; i++ {
 		ts := now.Add(-10 * time.Minute) // 全部超出窗口
-		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts})
+		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts, 0})
 	}
 	_, _, enough := agg.lossStats(now, 5*time.Minute)
 	if enough {
@@ -102,11 +102,11 @@ func TestLossStatsAsymmetricSampleCounts(t *testing.T) {
 	// 坏目标 a 已有 12 个全失败样本；好目标 b/c 各只有 9 个成功样本
 	for i := 0; i < 12; i++ {
 		ts := now.Add(-time.Duration(12-i) * time.Second)
-		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts})
+		agg.pingWin = append(agg.pingWin, pingRec{"a", false, ts, 0})
 	}
 	for i := 0; i < 9; i++ {
 		ts := now.Add(-time.Duration(9-i) * time.Second)
-		agg.pingWin = append(agg.pingWin, pingRec{"b", true, ts}, pingRec{"c", true, ts})
+		agg.pingWin = append(agg.pingWin, pingRec{"b", true, ts, 0}, pingRec{"c", true, ts, 0})
 	}
 	_, med, enough := agg.lossStats(now, 5*time.Minute)
 	if enough {
@@ -114,7 +114,7 @@ func TestLossStatsAsymmetricSampleCounts(t *testing.T) {
 	}
 	// 好目标补足到 10 个后：[0,0,100] 中位数 0，单坏目标不误报
 	ts := now
-	agg.pingWin = append(agg.pingWin, pingRec{"b", true, ts}, pingRec{"c", true, ts})
+	agg.pingWin = append(agg.pingWin, pingRec{"b", true, ts, 0}, pingRec{"c", true, ts, 0})
 	_, med, enough = agg.lossStats(now, 5*time.Minute)
 	if !enough {
 		t.Fatal("全部目标样本量足够后应参与统计")
@@ -221,19 +221,23 @@ func TestTypeFailHit(t *testing.T) {
 
 // medianLoss 共享口径：对称丢包取下中位数、单坏目标不降级、样本不足不下结论
 func TestMedianLoss(t *testing.T) {
-	pt := map[string][2]int{"a": {20, 4}, "b": {20, 4}, "c": {20, 4}}
+	pt := map[string]lossAgg{"a": {20, 400}, "b": {20, 400}, "c": {20, 400}}
 	if v, ok := lossMedian(pt); !ok || v != 20 {
 		t.Fatalf("对称丢包: %v %v", v, ok)
 	}
-	pt2 := map[string][2]int{"a": {20, 20}, "b": {20, 0}, "c": {20, 0}}
+	pt2 := map[string]lossAgg{"a": {20, 2000}, "b": {20, 0}, "c": {20, 0}}
 	if v, ok := lossMedian(pt2); !ok || v != 0 {
 		t.Fatalf("单坏目标中位数应为 0: %v %v", v, ok)
 	}
-	if _, ok := lossMedian(map[string][2]int{"a": {20, 10}, "b": {5, 5}}); ok {
+	if _, ok := lossMedian(map[string]lossAgg{"a": {20, 1000}, "b": {5, 500}}); ok {
 		t.Fatal("部分目标样本不足应 false")
 	}
-	if v, _ := lossMedian(map[string][2]int{"a": {20, 10}, "b": {20, 4}}); v != 20 {
+	if v, _ := lossMedian(map[string]lossAgg{"a": {20, 1000}, "b": {20, 400}}); v != 20 {
 		t.Fatalf("两目标下中位数: %v 期望 20", v)
+	}
+	// 轮丢包率加权（方案C）：a 轮 5 包丢 1（20%）、b 全成功 → 下中位数 0
+	if v, _ := lossMedian(map[string]lossAgg{"a": {20, 400}, "b": {20, 0}}); v != 0 {
+		t.Fatalf("单目标 20%% 轮丢包不应抬高中位数: %v", v)
 	}
 }
 
@@ -245,28 +249,28 @@ func TestMinuteStatsMedian(t *testing.T) {
 	for m := 0; m < 6; m++ {
 		for s := 0; s < 6; s++ {
 			ts := base.Add(time.Duration(m*60+s*10) * time.Second)
-			agg.pingWin = append(agg.pingWin, pingRec{"a", true, ts}, pingRec{"b", false, ts})
+			agg.pingWin = append(agg.pingWin, pingRec{"a", true, ts, 0}, pingRec{"b", false, ts, 0})
 		}
 	}
-	out := agg.minuteStats(5)
+	out := agg.minuteStats()
 	if len(out) == 0 {
 		t.Fatal("无输出")
 	}
-	if last := out[len(out)-1]; last.M != 0 {
-		t.Fatalf("单坏目标 M 应 0: %+v", last)
+	if last := out[len(out)-1]; last.P != 0 {
+		t.Fatalf("单坏目标 P 应 0: %+v", last)
 	}
 	// 对称降级：两目标各丢一半 → 中位数 50
 	agg2 := &probeAgg{}
 	for m := 0; m < 6; m++ {
 		for s := 0; s < 6; s++ {
 			ts := base.Add(time.Duration(m*60+s*10) * time.Second)
-			agg2.pingWin = append(agg2.pingWin, pingRec{"a", s%2 == 0, ts}, pingRec{"b", s%2 == 0, ts})
+			agg2.pingWin = append(agg2.pingWin, pingRec{"a", s%2 == 0, ts, 0}, pingRec{"b", s%2 == 0, ts, 0})
 		}
 	}
-	out2 := agg2.minuteStats(5)
+	out2 := agg2.minuteStats()
 	last2 := out2[len(out2)-1]
-	if last2.M != 50 {
-		t.Fatalf("对称丢包 M 应 50: %+v", last2)
+	if last2.P != 50 {
+		t.Fatalf("对称丢包 P 应 50: %+v", last2)
 	}
 	if last2.N != 12 || last2.F != 6 {
 		t.Fatalf("分钟计数错误: %+v", last2)
@@ -275,11 +279,11 @@ func TestMinuteStatsMedian(t *testing.T) {
 
 // poolMinStats 的 M 取最差（与状态聚合"取最差探针/线路"同构）
 func TestPoolMinStatsMedianMax(t *testing.T) {
-	out := poolMinStats([]MinStat{{T: 60, N: 6, F: 0, M: 12.5}}, []MinStat{{T: 60, N: 6, F: 1, M: 33.3}})
-	if len(out) != 1 || out[0].N != 12 || out[0].F != 1 || out[0].M != 33.3 {
+	out := poolMinStats([]MinStat{{T: 60, N: 6, F: 0, P: 12.5}}, []MinStat{{T: 60, N: 6, F: 1, P: 33.3}})
+	if len(out) != 1 || out[0].N != 12 || out[0].F != 1 || out[0].P != 33.3 {
 		t.Fatalf("并集错误: %+v", out)
 	}
-	if out2 := poolMinStats(nil, []MinStat{{T: 60, N: 1, M: 8}}); len(out2) != 1 || out2[0].M != 8 {
+	if out2 := poolMinStats(nil, []MinStat{{T: 60, N: 1, P: 8}}); len(out2) != 1 || out2[0].P != 8 {
 		t.Fatalf("单边输入应原样保留: %+v", out2)
 	}
 }

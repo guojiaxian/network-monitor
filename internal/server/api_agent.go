@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -20,14 +21,15 @@ import (
 
 // AgentAPI 探针侧 API：注册、配置下发、指标接收、心跳。
 type AgentAPI struct {
-	cfg   Config
-	store *Store
-	eng   *Engine
-	sched *SpeedSched
+	cfg    Config
+	store  *Store
+	eng    *Engine
+	sched  *SpeedSched
+	egress *EgressMonitor
 }
 
-func NewAgentAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched) *AgentAPI {
-	return &AgentAPI{cfg: cfg, store: store, eng: eng, sched: sched}
+func NewAgentAPI(cfg Config, store *Store, eng *Engine, sched *SpeedSched, egress *EgressMonitor) *AgentAPI {
+	return &AgentAPI{cfg: cfg, store: store, eng: eng, sched: sched, egress: egress}
 }
 
 func (a *AgentAPI) Routes(r chi.Router) {
@@ -38,6 +40,7 @@ func (a *AgentAPI) Routes(r chi.Router) {
 		r.Post("/metrics", a.metrics)
 		r.Post("/heartbeat", a.heartbeat)
 		r.Get("/download/{id}", a.download)
+		r.Get("/relay/alerts", a.relayAlerts) // probe-1 中继：中心专线断时代发告警
 	})
 }
 
@@ -151,6 +154,42 @@ func (a *AgentAPI) heartbeat(w http.ResponseWriter, r *http.Request) {
 		resp["refresh_egress"] = true // UI"立即刷新"：让 agent 马上重探出口并回报
 	}
 	writeJSON(w, resp)
+}
+
+// relayAlerts 供 probe-1 中继读取：中心公网出口状态 + 当前 firing 告警摘要。
+// 使用探针身份认证，只返回标题/级别/开始时间，不返回邮件正文与凭据。
+func (a *AgentAPI) relayAlerts(w http.ResponseWriter, r *http.Request) {
+	rows, total, err := a.store.ListAlerts(r.Context(), "firing", "", "", time.Time{}, 50, 0)
+	if err != nil {
+		httpError(w, 500, "db")
+		return
+	}
+	type item struct {
+		ID       int64     `json:"id"`
+		Severity string    `json:"severity"`
+		Kind     string    `json:"kind"`
+		Title    string    `json:"title"`
+		StartsAt time.Time `json:"starts_at"`
+	}
+	out := make([]item, 0, len(rows))
+	for _, x := range rows {
+		out = append(out, item{ID: x.ID, Severity: x.Severity, Kind: x.Kind, Title: x.Title, StartsAt: x.StartsAt})
+	}
+	egressOK := true
+	var checkedAt int64
+	if a.egress != nil {
+		egressOK = a.egress.OK()
+		if t := a.egress.CheckedAt(); !t.IsZero() {
+			checkedAt = t.Unix()
+		}
+	}
+	writeJSON(w, map[string]any{
+		"egress_ok":         egressOK,
+		"egress_checked_at": checkedAt,
+		"alerts":            out,
+		"total":             total,
+		"time":              time.Now().Format(time.RFC3339),
+	})
 }
 
 // download 探针鉴权后下载指定版本二进制（自更新用）

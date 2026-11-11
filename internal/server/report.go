@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -26,13 +27,16 @@ func DefaultNotifyChannels() NotifyChannels { return NotifyChannels{} }
 // ReportSettings 报表推送设置（后台可改）
 type ReportSettings struct {
 	DailyEnabled   bool   `json:"daily_enabled"`
-	DailyAt        string `json:"daily_at"` // "08:00"
+	DailyAt        string `json:"daily_at"`      // 生成时刻 "08:00"
+	DailySendAt    string `json:"daily_send_at"` // 发送时刻；空=生成后立即发送
 	WeeklyEnabled  bool   `json:"weekly_enabled"`
 	WeeklyDay      int    `json:"weekly_day"` // 1=周一 … 7=周日
 	WeeklyAt       string `json:"weekly_at"`
+	WeeklySendAt   string `json:"weekly_send_at"`
 	MonthlyEnabled bool   `json:"monthly_enabled"`
 	MonthlyDay     int    `json:"monthly_day"` // 每月几号（1~28），出上一自然月的报告
 	MonthlyAt      string `json:"monthly_at"`
+	MonthlySendAt  string `json:"monthly_send_at"`
 	OrgName        string `json:"org_name"` // 单位名称（报告模板 {{单位名称}} 变量取值）
 }
 
@@ -189,40 +193,109 @@ func (r *Reporter) tick(ctx context.Context) {
 	now := time.Now()
 	hhmm := func(t time.Time) string { return t.Format("15:04") }
 
+	// 生成时刻：只生成不发送；发送由独立发送时刻调度（留空=生成后立即发送，兼容旧语义）
 	// 日报：每 DailyAt 触发，统计昨日自然日
 	if rs.DailyEnabled && hhmm(now) == rs.DailyAt {
 		start, end := reportPeriod("day", now)
-		r.generateOnce(ctx, "day", start, end)
+		r.generateOnce(ctx, "day", start, end, rs.DailySendAt == "")
 	}
 	// 周报：WeeklyDay 指定星期，统计上一个自然周
 	if rs.WeeklyEnabled && int(now.Weekday()) == rs.WeeklyDay && hhmm(now) == rs.WeeklyAt {
 		start, end := reportPeriod("week", now)
-		r.generateOnce(ctx, "week", start, end)
+		r.generateOnce(ctx, "week", start, end, rs.WeeklySendAt == "")
 	}
 	// 月报：每月 MonthlyDay 日 MonthlyAt 触发，统计上一个自然月
 	if rs.MonthlyEnabled && now.Day() == rs.MonthlyDay && hhmm(now) == rs.MonthlyAt {
 		start, end := reportPeriod("month", now)
-		r.generateOnce(ctx, "month", start, end)
+		r.generateOnce(ctx, "month", start, end, rs.MonthlySendAt == "")
+	}
+	// 发送时刻：到点（>= 便于失败后 30s tick 自然重试，mailed_at 保证不重发）发送
+	// 最新一份已生成未发送的该类报表；无待发时静默跳过（常态）
+	if rs.DailyEnabled && rs.DailySendAt != "" && hhmm(now) >= rs.DailySendAt {
+		r.sendLatest(ctx, "day")
+	}
+	if rs.WeeklyEnabled && rs.WeeklySendAt != "" && hhmm(now) >= rs.WeeklySendAt {
+		r.sendLatest(ctx, "week")
+	}
+	if rs.MonthlyEnabled && rs.MonthlySendAt != "" && hhmm(now) >= rs.MonthlySendAt {
+		r.sendLatest(ctx, "month")
 	}
 }
 
-// Generate 手动生成报表（管理后台"立即生成"）
+// Generate 手动生成报表（管理后台"立即生成"：生成并立即邮件推送）
 func (r *Reporter) Generate(ctx context.Context, kind string) (int64, error) {
 	if kind != "day" && kind != "week" && kind != "month" {
 		return 0, fmt.Errorf("报表类型须为 day/week/month")
 	}
 	start, end := reportPeriod(kind, time.Now())
-	return r.generate(ctx, kind, start, end)
+	id, data, err := r.generate(ctx, kind, start, end)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.mailReport(ctx, kind, data); err != nil {
+		r.log.Printf("mail report: %v", err)
+	}
+	if err := r.store.MarkReportMailed(ctx, id); err != nil {
+		r.log.Printf("mark mailed #%d: %v", id, err)
+	}
+	return id, nil
 }
 
-func (r *Reporter) generateOnce(ctx context.Context, kind string, start, end time.Time) {
+// generateOnce 到点生成报表（exists 去重跨 30s 两次 tick）；sendNow=true 时生成后立即发送
+// （发送时刻留空的兼容语义），否则留待独立发送时刻调度
+func (r *Reporter) generateOnce(ctx context.Context, kind string, start, end time.Time, sendNow bool) {
 	exists, err := r.store.ReportExists(ctx, kind, end)
 	if err == nil && exists {
 		return
 	}
-	if _, err := r.generate(ctx, kind, start, end); err != nil {
+	id, data, err := r.generate(ctx, kind, start, end)
+	if err != nil {
 		r.log.Printf("generate %s report: %v", kind, err)
+		return
 	}
+	if sendNow {
+		if err := r.mailReport(ctx, kind, data); err != nil {
+			r.log.Printf("mail report: %v", err)
+		}
+		if err := r.store.MarkReportMailed(ctx, id); err != nil {
+			r.log.Printf("mark mailed #%d: %v", id, err)
+		}
+	}
+}
+
+// sendLatest 发送该类型最新一份已生成未发送的报表（独立发送时刻路径；
+// 发送时刻早于生成时刻时发送的是上一期报表；重启用 mailed_at 防重发）
+func (r *Reporter) sendLatest(ctx context.Context, kind string) {
+	id, ok, err := r.store.LatestUnmailedReport(ctx, kind)
+	if err != nil {
+		r.log.Printf("send %s report: %v", kind, err)
+		return
+	}
+	if !ok {
+		return // 无待发报表（常态），静默
+	}
+	if err := r.mailReportByID(ctx, kind, id); err != nil {
+		r.log.Printf("mail %s report #%d: %v", kind, id, err)
+		return // 不标记 mailed：下一个 30s tick 自然重试
+	}
+	if err := r.store.MarkReportMailed(ctx, id); err != nil {
+		r.log.Printf("mark mailed %s #%d: %v", kind, id, err)
+		return
+	}
+	r.log.Printf("report %s #%d mailed (scheduled send)", kind, id)
+}
+
+// mailReportByID 从库中报表 JSON 重建邮件并发送（独立发送时刻路径）
+func (r *Reporter) mailReportByID(ctx context.Context, kind string, id int64) error {
+	_, _, _, raw, err := r.store.GetReport(ctx, id)
+	if err != nil {
+		return err
+	}
+	var d reportData
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return err
+	}
+	return r.mailReport(ctx, kind, &d)
 }
 
 // seriesAgg 一条 VM 序列在统计窗口内的二次聚合
@@ -263,7 +336,7 @@ func aggSeries(ss []ExportSeries, label string) map[string]seriesAgg {
 // ptrF 值拷贝转指针（聚合结果写入 reportItem/reportLine）
 func ptrF(v float64) *float64 { return &v }
 
-func (r *Reporter) generate(ctx context.Context, kind string, start, end time.Time) (int64, error) {
+func (r *Reporter) generate(ctx context.Context, kind string, start, end time.Time) (int64, *reportData, error) {
 	// ---- VM 聚合：连通性/时延/丢包按 5 分钟桶精确统计（样本 10s 一轮，分层均值对等间隔样本无偏） ----
 	qr := func(q string) []ExportSeries {
 		ss, err := r.tsdb.QueryRange(ctx, q, start.Unix(), end.Unix(), 300)
@@ -292,7 +365,7 @@ func (r *Reporter) generate(ctx context.Context, kind string, start, end time.Ti
 
 	lines, err := r.store.ListLines(ctx)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	// ---- 告警：分级计数（精确）+ 明细（上限 repAlertLimit）----
@@ -445,12 +518,11 @@ func (r *Reporter) generate(ctx context.Context, kind string, start, end time.Ti
 
 	id, err := r.store.CreateReport(ctx, kind, start, end, data)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	r.log.Printf("report %s generated: %s ~ %s (%d lines, %d alerts)",
 		kind, data.Start, data.End, len(data.Lines), data.Summary.AlertTotal)
-	r.mailReport(ctx, kind, &data)
-	return id, nil
+	return id, &data, nil
 }
 
 // buildSummary 基于线路明细与告警计数计算汇总与自动评价/结论文案
@@ -549,10 +621,10 @@ func repDuration(d time.Duration) string {
 	}
 }
 
-func (r *Reporter) mailReport(ctx context.Context, kind string, d *reportData) {
+func (r *Reporter) mailReport(ctx context.Context, kind string, d *reportData) error {
 	var smtpCfg SMTPSettings
 	if err := r.store.GetSetting(ctx, "smtp", &smtpCfg); err != nil || !smtpCfg.Valid() {
-		return
+		return nil // 未配置 SMTP 视为不发送（不算失败，不必反复重试）
 	}
 	title := map[string]string{"day": "日报", "week": "周报", "month": "月报"}[kind]
 	if title == "" {
@@ -593,8 +665,10 @@ func (r *Reporter) mailReport(ctx context.Context, kind string, d *reportData) {
 	if r.mail != nil {
 		if err := r.mail(subject, b.String()); err != nil {
 			r.log.Printf("mail report: %v", err)
+			return err
 		}
 	}
+	return nil
 }
 
 // ReportCSV 导出线路明细 CSV（Excel 可直接打开，含 BOM）

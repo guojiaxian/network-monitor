@@ -1,7 +1,7 @@
 .PHONY: build agent server web test dist clean
 
 # 正式版本号：构建时注入 agent/server 的 main.version，前端由 package.json 读取
-VERSION ?= 1.0.1
+VERSION ?= 1.0.2
 
 build: agent server web
 
@@ -18,7 +18,7 @@ test:
 	go test ./...
 
 # 交付打包：产出 dist/netwatch-<版本>.tar.gz（含二进制/前端/部署物/文档）与 sha256
-DIST_VERSION ?= 1.0.1
+DIST_VERSION ?= 1.0.2
 VM_VERSION ?= v1.102.1
 
 # 下载 VictoriaMetrics 单二进制进交付包（多源尝试：GitHub 直连 + 国内镜像加速；已下载则复用）
